@@ -3,7 +3,7 @@
 *Last Updated: 2026-09-16*
 
 ## 1. Project Vision & Identity
-**AuraCare** is an enterprise-grade, HIPAA-compliant clinical Voice AI receptionist and doctor assistant built natively on the Microsoft Azure ecosystem (aligning with Microsoft Certified Azure AI Engineer Associate AI-102 / AI-103 architectures). It replaces fragile third-party AI stacks with a unified, zero-trust Azure foundation designed for low-latency phone triage, patient record retrieval, and automated scheduling.
+**AuraCare (MedFront)** is an enterprise-grade, HIPAA-compliant clinical Voice AI receptionist and doctor assistant built natively on the Microsoft Azure ecosystem (aligning with Microsoft Certified Azure AI Engineer Associate AI-102 / AI-103 architectures). It replaces fragile third-party AI stacks with a unified, zero-trust Azure foundation designed for low-latency phone triage, patient record retrieval, and automated scheduling.
 
 ---
 
@@ -40,7 +40,9 @@ Following the **5-Module Isolated Development Plan**:
 - [x] **Project Initialization & Scaffolding**
   - Architecture: Isolated modular directory pattern (`src/telephony`, `src/speech`, `src/brain`, `src/rag`, `src/actions`, `src/merger`).
   - Configuration: Pydantic Settings with zero-trust Managed Identity support (`DefaultAzureCredential`).
-  - Context Engine: Integrated **Graft** (`@nanonets/graft`) as the persistent codebase graph & AST context layer for AI coding agents.
+  - Context Engine: Integrated **Graft** (`@nanonets/graft`) for persistent Tree-sitter AST knowledge mapping.
+  - Documentation: Enterprise [README.md](file:///home/allen20306/allen/Azure_VoiceAI/README.md) with Linux & Windows setup guides.
+  - Development Mode: Autonomous Execution Mode enabled in `.agents/rules/rules.md`.
 - [ ] **Module 1: Telephony Isolation (ACS)**
   - Target: Inbound call answering, static WAV playback, event webhook handling.
   - Status: *Ready for Implementation*
@@ -70,10 +72,11 @@ Following the **5-Module Isolated Development Plan**:
 4. **Barge-in Voice UX:** Continuous STT monitoring during TTS playback; immediate audio buffer cancellation upon user speech detection.
 5. **Decoupled Team Structure:** Independent module directories (`src/telephony/`, `src/speech/`, etc.) with standalone entry points for isolated unit testing and parallel team development.
 6. **Agent Context Engineering (Graft):** Implemented Tree-sitter powered codebase indexing via `@nanonets/graft` to provide AI coding agents with instant AST topological context, reducing token costs and tool exploration cycles by 40-60%.
+7. **Autonomous Execution:** Upgraded agent operating rules in `.agents/rules/rules.md` to permit autonomous file management and command execution while maintaining strict engineering tutoring and progress logging.
 
 ---
 
 ## 5. Next Immediate Milestones
-1. Initialize Graft in workspace: `npx @nanonets/graft init` and generate graph `npx @nanonets/graft build`.
-2. Add `graft/` directory to `.gitignore`.
-3. Select first module to implement (recommended: Module 1 Telephony or Module 2 Speech Pipeline).
+1. Select first isolated module to implement:
+   - **Module 1: Telephony (ACS)** — FastAPI webhook endpoints, inbound call answering, static audio playback.
+   - **Module 2: Speech Processing** — Standalone Azure AI Speech continuous STT and neural TTS benchmark scripts.

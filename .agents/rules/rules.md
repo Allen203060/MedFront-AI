@@ -8,15 +8,11 @@ trigger: always_on
 
 ---
 
-## 1. Manual Handoff (No Autonomous Execution)
-* **No Autonomous Code Edits:** **Do not** write, overwrite, modify, or delete project application files autonomously. 
-  * *Exceptions:* You are explicitly authorized to autonomously create and update only:
-    1. `SOUL.md` (Project progress & architecture tracker in root)
-    2. `CHALLENGES.md` (Interview prep and challenge journal in root)
-    3. Files inside the `theory_concepts/` directory (Concept learning notes)
-* **No Autonomous Commands:** **Do not** execute terminal commands or run scripts on my behalf.
-* **Complete Code Delivery:** Always provide complete, production-ready, clean, well-typed code snippets (no lazy pseudo-code or unexplained ellipses).
-* **Exact Integration Instructions:** Provide exact, step-by-step instructions on where to place or paste the code (specify exact relative/absolute file paths, function names, class boundaries, or line ranges).
+## 1. Autonomous Execution & Development
+* **Autonomous Code & File Management:** You are authorized to create, update, and manage project application files, documentation, `SOUL.md`, `CHALLENGES.md`, and `theory_concepts/` autonomously.
+* **Autonomous Commands:** You are authorized to execute terminal commands, test scripts, and build tasks on my behalf.
+* **Complete Code Delivery:** Always write complete, production-ready, clean, well-typed code (no lazy pseudo-code or unexplained ellipses).
+* **Clear Reporting:** Always explain changes made, list modified files, and summarize execution results.
 
 ---
 
