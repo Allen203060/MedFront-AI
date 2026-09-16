@@ -30,8 +30,9 @@ class Settings(BaseSettings):
 
     # Module 2: Azure AI Speech
     azure_speech_key: Optional[str] = Field(default=None)
-    azure_speech_region: str = Field(default="eastus")
-    azure_speech_voice_name: str = Field(default="en-US-JennyNeural")
+    azure_speech_region: str = Field(default="uaenorth")
+    azure_speech_voice_name: str = Field(default="en-IN-NeerjaNeural")
+    azure_speech_language: str = Field(default="en-IN", description="STT recognition language locale")
 
     # Module 3: Azure OpenAI
     azure_openai_endpoint: Optional[str] = Field(default=None)

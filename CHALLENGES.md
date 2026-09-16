@@ -64,3 +64,20 @@ Implemented a full-duplex bi-directional streaming pipeline over WebSockets with
 
 #### 4. Interview Articulation ("The Pitch")
 > *"A primary barrier in voice AI is conversational flow. I solved the barge-in challenge by building an asynchronous full-duplex loop between Azure Communication Services and Azure AI Speech over WebSockets. We continuously monitor incoming audio via continuous STT even while outputting TTS chunks. When user interruption is detected via VAD, our orchestrator immediately halts the TTS stream, clears the ACS playback buffer, and redirects the conversation state, resulting in a responsive, natural phone experience."*
+### 3. Sub-Second Turn-Taking & Push-Stream Audio Processing
+- **Date:** 2026-09-17
+- **Module:** Module 2: Speech Processing Isolation
+
+#### 1. The Challenge / Bug
+Standard speech recognition SDKs read from local microphones or static disk files and default to high silence timeouts (~2000ms). When ingesting live network audio from WebRTC/ACS telephony, saving audio to disk creates unsustainable I/O latency, and standard silence timeouts cause callers to experience awkward multi-second dead air before the AI acknowledges their speech.
+
+#### 2. The Root Cause & Trade-offs
+Audio from telephony arrives as streaming byte frames over WebSockets. Feeding this into a recognizer requires in-memory streaming ingestion. Furthermore, setting the silence timeout too short (<400ms) causes premature turn cutoffs if a patient pauses to think, while setting it too long (>1500ms) ruins conversational flow.
+
+#### 3. The Solution & Best Practice
+1. Utilized Azure AI Speech `PushAudioInputStream` configured for 16kHz, 16-bit, Mono PCM to ingest streaming network frames in-memory without disk overhead.
+2. Tuned `SpeechServiceConnection_EndSilenceTimeoutMs` to 800ms and separated `recognizing` (interim partials for barge-in detection) from `recognized` (final punctuated utterance for LLM dispatch).
+3. Configured headless `SpeechSynthesizer` (`audio_config=None`) generating telephony-ready RIFF PCM WAV buffers with a Real-Time Factor (RTF) of ~0.26.
+
+#### 4. Interview Articulation ("The Pitch")
+> *"In telephony AI, latency and natural turn-taking are critical. Using Azure AI Speech SDK, I bypassed disk I/O entirely by feeding raw 16kHz PCM audio directly into an in-memory `PushAudioInputStream`. To solve awkward conversational dead air without cutting patients off mid-sentence, I tuned the voice segmentation silence timeout from the 2-second default down to 800ms. Additionally, I decoupled interim recognition events from final recognition events: interim events act as sub-200ms barge-in triggers to cancel ongoing audio playback, while finalized events trigger the conversational LLM."*
