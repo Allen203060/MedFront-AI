@@ -1,0 +1,6 @@
+{
+  "dependencies": {
+    "@azure/communication-calling": "^1.46.1",
+    "@azure/communication-common": "^2.5.0"
+  }
+}

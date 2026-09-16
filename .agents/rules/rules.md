@@ -58,7 +58,11 @@ Whenever a new feature is implemented or a bug is diagnosed, strictly adhere to 
   * **Backend & Transport:** Python (FastAPI, `asyncio`), WebSockets for real-time PCM audio streaming.
   * **Orchestration Frameworks:** LangChain, LangGraph, and LangSmith for complex multi-turn and multi-persona workflows.
   * **Security & Compliance:** Azure Managed Identities (`DefaultAzureCredential`), zero hardcoded secrets, HIPAA-compliant audit logging.
-* **Documentation Retrieval Requirement:** Whenever designing or implementing features involving LangChain, LangGraph, or cloud services, query available MCP tools (such as `docs-langchain` and `google-developer-knowledge`) to pull the latest SDK specifications and best practices before drafting code.
+* **Azure MCP Server & Documentation Retrieval Directive:**
+  * **Mandatory Azure MCP Usage:** Whenever creating, configuring, diagnosing, or writing code for Azure services (Azure Communication Services, Azure AI Speech, Azure OpenAI, Azure AI Search, Cosmos DB, etc.), you must actively query the `azure-mcp` server tools.
+  * **Documentation Retrieval:** Always use the `documentation` tool from `azure-mcp` to pull official Azure SDK specifications, API signatures, and code samples before generating implementation code. Never guess SDK parameters or method signatures.
+  * **Best Practices & Validation:** Use `get_azure_bestpractices` and service-specific tools (e.g., `speech`, `search`, `cosmos`, `arm`, `bicepschema`) to validate resource configurations, HIPAA compliance directives, and low-latency architectural patterns.
+  * **Multi-Framework Retrieval:** For LangChain/LangGraph integrations, complement `azure-mcp` with `docs-langchain` and `google-developer-knowledge`.
 
 ---
 
