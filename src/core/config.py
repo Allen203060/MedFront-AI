@@ -4,7 +4,7 @@ Loads environment variables safely using Pydantic Settings with support
 for local development (.env) and enterprise Managed Identity (DefaultAzureCredential).
 """
 
-from typing import Optional
+
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -24,30 +24,35 @@ class Settings(BaseSettings):
     app_port: int = Field(default=8000, description="FastAPI port")
 
     # Module 1: Telephony (Azure Communication Services)
-    acs_connection_string: Optional[str] = Field(default=None)
-    acs_phone_number: Optional[str] = Field(default=None)
-    acs_callback_base_url: Optional[str] = Field(default=None)
+    acs_connection_string: str | None = Field(default=None)
+    acs_phone_number: str | None = Field(default=None)
+    acs_callback_base_url: str | None = Field(default=None)
 
     # Module 2: Azure AI Speech
-    azure_speech_key: Optional[str] = Field(default=None)
+    azure_speech_key: str | None = Field(default=None)
     azure_speech_region: str = Field(default="eastus")
     azure_speech_voice_name: str = Field(default="en-US-JennyNeural")
 
     # Module 3: Azure OpenAI
-    azure_openai_endpoint: Optional[str] = Field(default=None)
-    azure_openai_api_key: Optional[str] = Field(default=None)
+    azure_openai_endpoint: str | None = Field(default=None)
+    azure_openai_api_key: str | None = Field(default=None)
     azure_openai_api_version: str = Field(default="2024-08-01-preview")
     azure_openai_deployment_name: str = Field(default="gpt-4o")
+    azure_openai_embedding_deployment: str = Field(default="text-embedding-3-large")
 
-    # Module 4: Azure AI Search
-    azure_search_endpoint: Optional[str] = Field(default=None)
-    azure_search_api_key: Optional[str] = Field(default=None)
+    # Module 4: Azure AI Search & RAG
+    azure_search_endpoint: str | None = Field(default=None)
+    azure_search_api_key: str | None = Field(default=None)
     azure_search_patient_index: str = Field(default="patient-records-index")
     azure_search_clinic_index: str = Field(default="clinic-knowledge-index")
+    use_local_rag: bool = Field(
+        default=False,
+        description="Force local vector engine regardless of Azure credentials"
+    )
 
     # Module 5: Azure Cosmos DB
-    cosmos_db_endpoint: Optional[str] = Field(default=None)
-    cosmos_db_key: Optional[str] = Field(default=None)
+    cosmos_db_endpoint: str | None = Field(default=None)
+    cosmos_db_key: str | None = Field(default=None)
     cosmos_db_database_name: str = Field(default="MedFront_db")
     cosmos_db_patients_container: str = Field(default="patients")
     cosmos_db_appointments_container: str = Field(default="appointments")
@@ -61,6 +66,25 @@ class Settings(BaseSettings):
         default=True, 
         description="Enable real-time STT interrupt during TTS output"
     )
+
+    @property
+    def is_azure_search_configured(self) -> bool:
+        """Check if Azure AI Search credentials and endpoint are available."""
+        return bool(self.azure_search_endpoint and (self.azure_search_api_key or self.use_managed_identity))
+
+    @property
+    def is_azure_openai_configured(self) -> bool:
+        """Check if Azure OpenAI credentials and endpoint are available."""
+        return bool(self.azure_openai_endpoint and (self.azure_openai_api_key or self.use_managed_identity))
+
+    @property
+    def effective_rag_mode(self) -> str:
+        """Return 'azure' if configured and not explicitly forced local, else 'local'."""
+        if self.use_local_rag:
+            return "local"
+        if self.is_azure_search_configured and self.is_azure_openai_configured:
+            return "azure"
+        return "local"
 
 
 # Singleton instance exported across the application
