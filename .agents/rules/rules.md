@@ -8,11 +8,11 @@ trigger: always_on
 
 ---
 
-## 1. Autonomous Execution & Development
-* **Autonomous Code & File Management:** You are authorized to create, update, and manage project application files, documentation, `SOUL.md`, `CHALLENGES.md`, and `theory_concepts/` autonomously.
-* **Autonomous Commands:** You are authorized to execute terminal commands, test scripts, and build tasks on my behalf.
-* **Complete Code Delivery:** Always write complete, production-ready, clean, well-typed code (no lazy pseudo-code or unexplained ellipses).
-* **Clear Reporting:** Always explain changes made, list modified files, and summarize execution results.
+## 1. Strict Non-Autonomous & Guided Development
+* **Strict Non-Autonomous Mode:** You are NOT authorized to create, modify, or delete any project files, documentation (`SOUL.md`, `CHALLENGES.md`, `theory_concepts/`), or execute terminal commands/scripts autonomously.
+* **Task Assignment & Location Guidance:** Break down work into clear, manageable tasks. Always provide complete, production-ready code (no lazy pseudo-code or unexplained ellipses) and specify the exact file paths and locations where the user should write or modify the code.
+* **Line-by-Line & Intent Breakdown:** For every code snippet or change, explain it line-by-line. Clearly detail the exact intent and rationale behind each step so the user understands why a particular design choice or line of code is needed.
+* **Interactive Collaboration:** Present tasks, explain the mechanics, wait for the user to write code and execute commands, and provide verification steps.
 
 ---
 
@@ -38,13 +38,13 @@ Whenever a new feature is implemented or a bug is diagnosed, strictly adhere to 
 ---
 
 ## 5. Project Soul (`SOUL.md`)
-* Maintain and autonomously update `SOUL.md` in the workspace root.
+* Provide updates and snippets, maintain and autonomously update for `SOUL.md` in the workspace root so the user can keep it updated.
 * **Contents:**
   * High-level architectural blueprint (Azure ecosystem layout, data flows).
   * Current progress across the **5 Isolated Project Modules** and **The Merger**.
   * Active design decisions (e.g., Cosmos DB vs. PostgreSQL, SOAP note schema, FHIR alignment).
   * Next logical implementation steps.
-* Update `SOUL.md` at the end of each session or major technical milestone. Keep it dense and token-efficient.
+* Suggest `SOUL.md` updates at the end of each session or major technical milestone. Keep suggestions dense and token-efficient.
 
 ---
 
@@ -75,7 +75,7 @@ Whenever a new feature is implemented or a bug is diagnosed, strictly adhere to 
 
 ## 8. Concept Teaching & Theory Notes (`/theory_concepts/`)
 * **Pre-requisite Conceptual Explanations:** Before introducing a major architectural pattern, Azure service feature, or algorithmic concept, teach the foundational concepts first.
-* **Autonomous Theory Note Creation:** For each major concept taught, autonomously generate a markdown summary file in `/theory_concepts/` (e.g., `/theory_concepts/barge_in_audio_streaming.md`, `/theory_concepts/scoped_healthcare_rag.md`, `/theory_concepts/acs_call_automation_websockets.md`).
+* **Theory Note Content:** For each major concept taught, provide a comprehensive markdown summary for the user to save in `/theory_concepts/` (e.g., `/theory_concepts/barge_in_audio_streaming.md`, `/theory_concepts/scoped_healthcare_rag.md`, `/theory_concepts/acs_call_automation_websockets.md`).
 * **Content:** Include architectural diagrams (ASCII/Mermaid), latency implications, Azure SDK mechanics, and failure modes.
 
 ---
@@ -89,7 +89,7 @@ Whenever a new feature is implemented or a bug is diagnosed, strictly adhere to 
 ---
 
 ## 10. Interview Prep & Challenge Journaling (`CHALLENGES.md`)
-* **Autonomous Maintenance:** Autonomously create and maintain `CHALLENGES.md` in the workspace root.
+* **Guided Maintenance:** Provide structured entries for the user to add to `CHALLENGES.md` in the workspace root.
 * **Purpose:** Prepare for technical interviews, system design rounds, and Azure AI certification defenses (AI-102/AI-103).
 * **Format:** Every major bug solved, performance bottleneck resolved, or architectural trade-off made must be documented with:
   1. **The Challenge / Bug:** Concrete technical description with code/architecture context.
