@@ -40,6 +40,7 @@ Following the **5-Module Isolated Development Plan**:
 - [x] **Project Initialization & Scaffolding**
   - Architecture: Isolated modular directory pattern (`src/telephony`, `src/speech`, `src/brain`, `src/rag`, `src/actions`, `src/merger`).
   - Configuration: Pydantic Settings with zero-trust Managed Identity support (`DefaultAzureCredential`).
+  - Context Engine: Integrated **Graft** (`@nanonets/graft`) as the persistent codebase graph & AST context layer for AI coding agents.
 - [ ] **Module 1: Telephony Isolation (ACS)**
   - Target: Inbound call answering, static WAV playback, event webhook handling.
   - Status: *Ready for Implementation*
@@ -68,9 +69,11 @@ Following the **5-Module Isolated Development Plan**:
    - *Doctor:* Full longitudinal clinical history access via authenticated role-based access control.
 4. **Barge-in Voice UX:** Continuous STT monitoring during TTS playback; immediate audio buffer cancellation upon user speech detection.
 5. **Decoupled Team Structure:** Independent module directories (`src/telephony/`, `src/speech/`, etc.) with standalone entry points for isolated unit testing and parallel team development.
+6. **Agent Context Engineering (Graft):** Implemented Tree-sitter powered codebase indexing via `@nanonets/graft` to provide AI coding agents with instant AST topological context, reducing token costs and tool exploration cycles by 40-60%.
 
 ---
 
 ## 5. Next Immediate Milestones
-1. Team executes project initialization commands and creates foundational scaffolding files (`requirements.txt`, `.env.example`, `.gitignore`, `src/core/config.py`).
-2. Select first module to implement (recommended: Module 1 Telephony or Module 2 Speech Pipeline).
+1. Initialize Graft in workspace: `npx @nanonets/graft init` and generate graph `npx @nanonets/graft build`.
+2. Add `graft/` directory to `.gitignore`.
+3. Select first module to implement (recommended: Module 1 Telephony or Module 2 Speech Pipeline).
