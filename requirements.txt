@@ -1,0 +1,23 @@
+# --- Microsoft Azure Enterprise SDKs ---
+azure-communication-callautomation==1.2.0
+azure-cognitiveservices-speech==1.42.0
+azure-search-documents==11.6.0b1
+azure-cosmos==4.9.0
+azure-identity==1.19.0
+
+# --- OpenAI & Agentic Layer ---
+openai==1.54.0
+
+# --- Web Framework & Real-Time WebSockets ---
+fastapi==0.115.4
+uvicorn[standard]==0.32.0
+websockets==13.1
+
+# --- Configuration & Data Validation ---
+pydantic==2.9.2
+pydantic-settings==2.6.1
+python-dotenv==1.0.1
+
+# --- Testing & Async Tooling ---
+pytest==8.3.3
+pytest-asyncio==0.24.0
