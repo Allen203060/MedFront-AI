@@ -64,3 +64,24 @@ Implemented a full-duplex bi-directional streaming pipeline over WebSockets with
 
 #### 4. Interview Articulation ("The Pitch")
 > *"A primary barrier in voice AI is conversational flow. I solved the barge-in challenge by building an asynchronous full-duplex loop between Azure Communication Services and Azure AI Speech over WebSockets. We continuously monitor incoming audio via continuous STT even while outputting TTS chunks. When user interruption is detected via VAD, our orchestrator immediately halts the TTS stream, clears the ACS playback buffer, and redirects the conversation state, resulting in a responsive, natural phone experience."*
+
+---
+
+### 3. Preventing Double-Booking Race Conditions in Voice Action Tool Calling
+- **Date:** 2026-09-16
+- **Module:** Module 5: Action Layer & Database Isolation
+
+#### 1. The Challenge / Bug
+In high-throughput clinic phone lines, multiple callers or receptionists may request the same appointment slot simultaneously. If the LLM generates a tool call based on availability read moments earlier, naive asynchronous writes can result in double-booking the same physician time slot.
+
+#### 2. The Root Cause & Trade-offs
+Separating slot inspection (`check_schedule_availability`) from slot reservation (`book_appointment`) creates a classic Time-of-Check to Time-of-Use (TOCTOU) race condition. Relying purely on client-side state or eventual consistency fails when concurrency spikes.
+
+#### 3. The Solution & Best Practice
+1. **Atomic Mutation & Optimistic Concurrency:** Implemented strict slot status validation inside the atomic booking transaction with Cosmos DB E-Tag validation (`If-Match: <etag>`).
+2. **Conflict Error Envelope:** If a slot is claimed between check and confirmation, the action tool returns a structured `BOOKING_FAILED` code with descriptive message (`"Time slot already booked"`).
+3. **Conversational Self-Correction:** The AI Receptionist intercepts the failure envelope and immediately prompts the caller with alternative slots on the same day without breaking the voice session.
+
+#### 4. Interview Articulation ("The Pitch")
+> *"In a multi-agent voice triage system, appointment scheduling cannot rely on eventual consistency. I eliminated double-booking by enforcing atomic slot reservations with optimistic concurrency in Azure Cosmos DB. When concurrent callers target the same doctor slot, our action layer detects the collision at the database boundary and returns a structured error envelope. This enables the LLM to gracefully pivot the conversation and offer alternative available times in real time, guaranteeing clinical schedule integrity."*
+
