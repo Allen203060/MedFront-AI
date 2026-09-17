@@ -1,5 +1,10 @@
 import json
 import sys
+import warnings
+
+# Suppress google-genai SDK automatic function calling warning printed to terminal
+warnings.filterwarnings("ignore", category=UserWarning, message=".*automatic function calling.*")
+
 from src.brain.orchestrator import AgenticBrainOrchestrator
 
 

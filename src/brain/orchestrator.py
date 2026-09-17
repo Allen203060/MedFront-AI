@@ -6,9 +6,13 @@ from google.genai import types
 
 import json
 import os
+import warnings
 from typing import Optional, Dict, Any
 from dotenv import load_dotenv
 from google import genai
+
+# Suppress google-genai SDK warning about direct use of automatic function calling
+warnings.filterwarnings("ignore", category=UserWarning, message=".*automatic function calling.*")
 
 from src.brain.interfaces import RAGProviderInterface, ToolRegistryInterface
 from src.brain.memory import ConversationMemory
