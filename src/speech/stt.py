@@ -43,7 +43,7 @@ class SpeechToTextEngine:
         self.speech_config.speech_recognition_language = settings.azure_speech_language
         logger.info(f"STT initialized with language: {settings.azure_speech_language}")
 
-        # 2. Conversational Voice Activity Detection (VAD) Tuning (1200ms allows natural cadence)
+        # 2. Conversational Voice Activity Detection (VAD) Tuning & Noise Suppression
         self.speech_config.set_property(
             speechsdk.PropertyId.SpeechServiceConnection_EndSilenceTimeoutMs,
             str(end_silence_timeout_ms),
@@ -51,6 +51,16 @@ class SpeechToTextEngine:
         self.speech_config.set_property(
             speechsdk.PropertyId.SpeechServiceConnection_InitialSilenceTimeoutMs,
             str(initial_silence_timeout_ms),
+        )
+        # Suppress breath/air turbulence false interim triggers by requiring 2 stable decoder hypotheses
+        self.speech_config.set_property(
+            speechsdk.PropertyId.SpeechServiceResponse_StablePartialResultThreshold,
+            "2",
+        )
+        # Enable TrueText for disfluency cleaning and inverse text normalization
+        self.speech_config.set_property(
+            speechsdk.PropertyId.SpeechServiceResponse_PostProcessingOption,
+            "TrueText",
         )
 
         # 3. Audio Stream Format: 16kHz, 16-bit, Mono PCM
@@ -79,14 +89,34 @@ class SpeechToTextEngine:
         """Injects clinic and medical specialties into the recognizer's grammar model."""
         phrase_list = speechsdk.PhraseListGrammar.from_recognizer(self.recognizer)
         medical_terms = [
-            "MedFront Clinic", "MedFront", "Appointment", "Cardiology", "Cardiologist",
-            "Neurology", "Orthopedics", "General Physician", "Prescription", "Doctor",
-            "Consultation", "Blood test", "Radiology", "Dermatology", "Pediatrics",
-            "Reschedule", "Receptionist", "Insurance", "Emergency"
+            # Specialties & spoken department variations
+            "Cardiology", "Cardio", "Cardiologist", "Cardio Department", "Cardiology Department",
+            "Cardiac", "Heart Specialist", "Heart Department", "Cardio Clinic",
+            "General Physician", "General Medicine", "General Practice", "Internal Medicine",
+            "Dermatology", "Dermatologist", "Skin Department", "Skin Specialist", "Skin Clinic",
+            "Pediatrics", "Pediatrician", "Orthopedics", "Neurology", "Radiology",
+            
+            # Clinician names (Indian context)
+            "Dr. Ananya Rao", "Dr. Ananya", "Ananya Rao", "Ananya",
+            "Dr. Rajesh Iyer", "Dr. Rajesh", "Rajesh Iyer", "Rajesh",
+            "Dr. Sunita Kapoor", "Dr. Sunita", "Sunita Kapoor", "Sunita",
+            
+            # Clinic branding & regional terms
+            "MedFront Health Clinic", "MedFront", "AuraCare Health Clinic", "AuraCare",
+            "Koramangala", "Bengaluru", "Bangalore", "Receptionist", "Aura",
+            
+            # Conversational scheduling & administrative terms
+            "Appointment", "Book an appointment", "Schedule availability", "Consultation",
+            "Follow-up", "Reschedule", "Cancellation", "Prescription", "Blood test", "Lab report",
+            "Tomorrow", "Today", "Next Monday", "Next Tuesday", "Next Wednesday", "Next Thursday", "Next Friday",
+            "Morning slot", "Afternoon slot", "Evening slot", "Emergency", "Insurance", "Star Health", "HDFC ERGO",
+            
+            # Patient names
+            "Aarav Sharma", "Priya Patel", "Vikram Malhotra"
         ]
         for term in medical_terms:
             phrase_list.addPhrase(term)
-        logger.info(f"Loaded {len(medical_terms)} medical phrase hints into STT model.")
+        logger.info(f"Loaded {len(medical_terms)} medical and clinic phrase hints into STT model.")
 
     def _register_callbacks(self) -> None:
         self.recognizer.recognizing.connect(self._handle_recognizing)

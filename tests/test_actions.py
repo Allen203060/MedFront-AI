@@ -53,22 +53,22 @@ def test_openai_tool_schemas_validity():
 def test_verify_patient_identity_success():
     """Validates exact deterministic match on known patient fixture."""
     res = verify_patient_identity(
-        first_name="Robert",
-        last_name="Chen",
+        first_name="Aarav",
+        last_name="Sharma",
         date_of_birth="1985-04-12"
     )
     assert res.success is True
     assert res.data is not None
     assert res.data["patient_id"] == "P-10023"
-    assert res.data["first_name"] == "Robert"
-    assert res.data["last_name"] == "Chen"
+    assert res.data["first_name"] == "Aarav"
+    assert res.data["last_name"] == "Sharma"
 
 
 def test_verify_patient_identity_case_insensitivity():
     """Validates case-insensitive trimming on patient names."""
     res = verify_patient_identity(
-        first_name="  robert  ",
-        last_name="CHEN ",
+        first_name="  aarav  ",
+        last_name="SHARMA ",
         date_of_birth="1985-04-12"
     )
     assert res.success is True
@@ -99,6 +99,39 @@ def test_check_schedule_availability(target_test_date):
     assert len(sched["available_slots"]) > 0
 
 
+def test_check_schedule_availability_with_department_synonyms_and_relative_dates():
+    """Verifies that colloquial terms ('Cardio Department', 'tomorrow') resolve cleanly."""
+    res = check_schedule_availability(
+        doctor_name_or_specialty="Cardio Department",
+        target_date="tomorrow"
+    )
+    assert res.success is True
+    assert res.data["total_open_slots"] > 0
+    assert "Cardiology" in res.message
+
+
+def test_check_schedule_availability_with_rd_cardo_mishearing():
+    """Verifies that acoustic STT mis-transcriptions like 'Rd Cardo department' resolve to Cardiology."""
+    res = check_schedule_availability(
+        doctor_name_or_specialty="Rd Cardo department",
+        target_date="tomorrow"
+    )
+    assert res.success is True
+    assert res.data["total_open_slots"] > 0
+    assert "Dr. Ananya Rao" in res.message or "Cardiology" in res.message
+
+
+def test_check_schedule_availability_with_skin_clinic_and_today():
+    """Verifies that dermatology synonyms and today's date resolve cleanly."""
+    res = check_schedule_availability(
+        doctor_name_or_specialty="skin clinic",
+        target_date="today"
+    )
+    assert res.success is True
+    assert res.data["total_open_slots"] > 0
+    assert "Dermatology" in res.message or "Dr. Sunita Kapoor" in res.message
+
+
 def test_end_to_end_booking_and_double_booking_prevention(target_test_date):
     """
     Tests:
@@ -108,8 +141,16 @@ def test_end_to_end_booking_and_double_booking_prevention(target_test_date):
     4. Cancelling appointment and verifying slot is freed.
     """
     patient_id = "P-10023"
-    doctor_name = "Dr. Sarah Smith"
+    doctor_name = "Dr. Ananya Rao"
     slot_time = "10:00 AM"
+
+    # Pre-cleanup in case a prior test run left a booking
+    from src.actions.db_service import get_db_service
+    db = get_db_service()
+    for pid in [patient_id, "P-10024"]:
+        for a in db.get_patient_appointments(pid):
+            if a.appointment_date == target_test_date and a.appointment_time == slot_time:
+                db.cancel_appointment(pid, a.id)
 
     # Step 1: Book the appointment
     book_res = book_appointment(
@@ -156,10 +197,14 @@ def test_end_to_end_booking_and_double_booking_prevention(target_test_date):
     )
     assert rebook_res.success is True
 
+    # Post-cleanup: ensure slot is freed for subsequent test runs
+    if rebook_res.data and "id" in rebook_res.data:
+        cancel_appointment(patient_id="P-10024", appointment_id=rebook_res.data["id"])
+
 
 def test_execute_tool_dispatcher_with_json_string(target_test_date):
     """Validates the universal dispatcher when receiving JSON serialized strings from LLM."""
-    args_json = f'{{"doctor_name_or_specialty": "Dr. James Wilson", "target_date": "{target_test_date}"}}'
+    args_json = f'{{"doctor_name_or_specialty": "Dr. Ananya Rao", "target_date": "{target_test_date}"}}'
     res = execute_tool("check_schedule_availability", args_json)
     assert isinstance(res, dict)
     assert res["success"] is True

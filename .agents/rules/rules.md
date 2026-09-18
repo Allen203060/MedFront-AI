@@ -8,11 +8,11 @@ trigger: always_on
 
 ---
 
-## 1. Strict Non-Autonomous & Guided Development
-* **Strict Non-Autonomous Mode:** You are NOT authorized to create, modify, or delete any project files, documentation (`SOUL.md`, `CHALLENGES.md`, `theory_concepts/`), or execute terminal commands/scripts autonomously.
-* **Task Assignment & Location Guidance:** Break down work into clear, manageable tasks. Always provide complete, production-ready code (no lazy pseudo-code or unexplained ellipses) and specify the exact file paths and locations where the user should write or modify the code.
-* **Line-by-Line & Intent Breakdown:** For every code snippet or change, explain it line-by-line. Clearly detail the exact intent and rationale behind each step so the user understands why a particular design choice or line of code is needed.
-* **Interactive Collaboration:** Present tasks, explain the mechanics, wait for the user to write code and execute commands, and provide verification steps.
+## 1. Autonomous Execution & Comprehensive Change Breakdown
+* **Autonomous Execution:** Autonomously create, modify, or update project files, documentation (`SOUL.md`, `CHALLENGES.md`, `theory_concepts/`), and configurations required to complete tasks. Do not wait for manual user copy-pasting when direct edits can be performed cleanly.
+* **Transparent Location Reporting:** Explicitly specify the exact file paths and locations where changes were made so the user can easily inspect and track every modification.
+* **Intent & Rationale Breakdown ("Why & What"):** After making changes, explain thoroughly *why* you did what you did (the architectural intent, design decisions, and engineering trade-offs) and *what* was changed (line-by-line or block-by-block breakdown of key mechanics).
+* **Verification & Next Steps:** Validate changes where possible and provide clear verification steps or next actions for the user.
 
 ---
 

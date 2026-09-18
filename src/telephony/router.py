@@ -17,6 +17,7 @@ from src.telephony.service import telephony_service
 from src.speech.tts import TextToSpeechEngine
 from src.speech.stt import SpeechToTextEngine
 from src.brain.orchestrator import AgenticBrainOrchestrator
+from src.brain.live_providers import LiveRAGProvider, LiveToolRegistry
 
 logger = logging.getLogger("medfront.telephony.router")
 router = APIRouter(prefix="/api/telephony", tags=["Telephony"])
@@ -199,7 +200,10 @@ async def audio_stream_websocket(websocket: WebSocket) -> None:
     active_call_state["has_websocket_client"] = True
 
     loop = asyncio.get_running_loop()
-    brain_orchestrator = AgenticBrainOrchestrator()
+    brain_orchestrator = AgenticBrainOrchestrator(
+        rag_provider=LiveRAGProvider(),
+        tool_registry=LiveToolRegistry(),
+    )
 
     # Send opening greeting immediately over WebSocket so caller hears Aura with zero cloud delay
     greeting_text = (
@@ -209,6 +213,13 @@ async def audio_stream_websocket(websocket: WebSocket) -> None:
     active_call_state["last_played_text"] = greeting_text
     active_call_state["is_playing_audio"] = True
     active_call_state["last_audio_start_time"] = time.time()
+
+    async def _auto_clear_playback(delay_seconds: float) -> None:
+        """Automatically resets the is_playing_audio state after the audio duration expires."""
+        await asyncio.sleep(delay_seconds + 0.3)
+        active_call_state["is_playing_audio"] = False
+        active_call_state["last_playback_end_time"] = time.time()
+        logger.debug("[Audio Playback] Auto-cleared is_playing_audio to False")
 
     await websocket.send_json({
         "type": "assistant",
@@ -223,29 +234,74 @@ async def audio_stream_websocket(websocket: WebSocket) -> None:
             greeting_audio = tts_engine.synthesize_text(greeting_text)
             b64_greeting = base64.b64encode(greeting_audio).decode("utf-8")
             await websocket.send_json({"type": "audio", "data": b64_greeting})
+            # Schedule auto-reset of playing flag after greeting audio length (16kHz 16-bit mono = 32000 bytes/sec)
+            greeting_duration = max(1.0, len(greeting_audio) / 32000.0)
+            asyncio.create_task(_auto_clear_playback(greeting_duration))
         except Exception as e:
             logger.warning(f"Could not synthesize initial WebSocket greeting audio: {e}")
+            active_call_state["is_playing_audio"] = False
 
     def on_interim(text: str) -> None:
         """Fires when interim speech is recognized (Barge-in trigger)."""
-        # 1. Barge-In: If AI is playing and user speaks, cancel playback immediately!
+        clean_text = text.strip()
+        words = [w for w in re.findall(r'\b\w+\b', clean_text) if len(w) >= 2]
+        if not words:
+            return
+
+        # 1. Barge-In: If AI is actively playing and user speaks, cancel playback immediately!
         if active_call_state.get("is_playing_audio"):
             call_id = active_call_state.get("call_connection_id")
-            logger.info(f"[BARGE-IN TRIGGERED] User spoke: '{text}'. Interrupting playback...")
+            logger.info(f"[BARGE-IN TRIGGERED] Caller spoke word '{clean_text}'. Interrupting playback...")
+            active_call_state["is_playing_audio"] = False
+            active_call_state["last_playback_end_time"] = time.time()
+
+            # Signal browser to immediately halt active Web Audio playback
+            asyncio.run_coroutine_threadsafe(
+                websocket.send_json({"type": "interrupt"}),
+                loop,
+            )
+
             if call_id and telephony_service.client:
                 try:
                     conn = telephony_service.client.get_call_connection(call_id)
                     conn.cancel_all_media_operations()
                 except Exception as e:
                     logger.warning(f"Barge-in cancel error: {e}")
-            active_call_state["is_playing_audio"] = False
-            active_call_state["last_playback_end_time"] = time.time()
 
         # 2. Push interim text back to browser UI
         asyncio.run_coroutine_threadsafe(
-            websocket.send_json({"type": "interim", "text": text}),
+            websocket.send_json({"type": "interim", "text": clean_text}),
             loop,
         )
+
+    def _is_acoustic_speaker_echo(transcribed_text: str, last_played_text: str) -> bool:
+        """Detects when laptop/phone speakers leak assistant audio back into the microphone."""
+        if not last_played_text or not transcribed_text:
+            return False
+            
+        # 1. Physical constraint: Echo can ONLY occur while the speaker is physically playing audio!
+        # If AI is not actively playing audio right now (or has stopped >0.3s ago), it is 100% genuine user speech.
+        if not active_call_state.get("is_playing_audio"):
+            last_end = active_call_state.get("last_playback_end_time", 0)
+            if time.time() - last_end > 0.3:
+                return False
+
+        ai_words = set(w.lower() for w in re.findall(r'\b\w{3,}\b', last_played_text))
+        user_words = [w.lower() for w in re.findall(r'\b\w{3,}\b', transcribed_text)]
+        if not user_words or not ai_words:
+            return False
+
+        # Common user greetings, affirmations, and scheduling terms must NEVER be filtered as echo
+        safe_words = {"hello", "hi", "hey", "yes", "no", "cardio", "cardiology", "doctor", "appointment", "book", "schedule", "tomorrow", "today", "help", "aura"}
+        if any(w in safe_words for w in user_words):
+            return False
+
+        # Only drop if the transcribed text is a near-exact verbatim echo (>75% overlap) and has at least 4 words
+        overlap_count = sum(1 for w in user_words if w in ai_words)
+        overlap_ratio = overlap_count / len(user_words)
+        if overlap_ratio >= 0.75 and len(user_words) >= 4:
+            return True
+        return False
 
     def on_final(text: str) -> None:
         """Fires when user pauses and sentence is finalized."""
@@ -255,29 +311,21 @@ async def audio_stream_websocket(websocket: WebSocket) -> None:
 
         logger.info(f"[STT Finalized]: '{clean_text}'")
 
-        # 1. Deadlock Safety Reset: If is_playing_audio has been True for > 5s, release lock
+        # 1. Filter acoustic loopback feedback (only during active speaker output)
+        last_spoken = active_call_state.get("last_played_text", "").strip()
+        if _is_acoustic_speaker_echo(clean_text, last_spoken):
+            logger.info(f"[ECHO SUPPRESSION]: Filtered acoustic speaker loopback: '{clean_text}'")
+            return
+
+        # 2. If AI was still playing, genuine caller barge-in! Interrupt audio and process turn.
         if active_call_state.get("is_playing_audio"):
-            last_start = active_call_state.get("last_audio_start_time", 0.0)
-            if (time.time() - last_start) > 5.0:
-                logger.warning("[SAFETY WATCHDOG]: Released stale is_playing_audio lock after 5s timeout.")
-                active_call_state["is_playing_audio"] = False
-                active_call_state["last_playback_end_time"] = time.time()
-            else:
-                logger.info(f"[ECHO SUPPRESSION]: Ignored speech while AI audio active: '{clean_text}'")
-                return
-
-        # 2. Time-Windowed Semantic Tail Bleed Suppression (within 1.8s of playback end)
-        time_since_playback = time.time() - active_call_state.get("last_playback_end_time", 0.0)
-        last_spoken = active_call_state.get("last_played_text", "").strip().lower()
-        clean_lower = clean_text.lower().rstrip(".?!")
-
-        if last_spoken and time_since_playback < 1.8:
-            spoken_words = set(last_spoken.split())
-            user_words = set(clean_lower.split())
-            overlap = len(spoken_words.intersection(user_words))
-            if overlap >= 2 or (len(clean_lower) > 5 and clean_lower in last_spoken):
-                logger.info(f"[ECHO SUPPRESSION]: Filtered tail bleed ({overlap} word overlap within {time_since_playback:.1f}s): '{clean_text}'")
-                return
+            logger.info(f"[BARGE-IN FINALIZED] User completed turn during playback: '{clean_text}'")
+            active_call_state["is_playing_audio"] = False
+            active_call_state["last_playback_end_time"] = time.time()
+            asyncio.run_coroutine_threadsafe(
+                websocket.send_json({"type": "interrupt"}),
+                loop,
+            )
 
         # 3. Push verified User transcript to browser UI
         asyncio.run_coroutine_threadsafe(
@@ -319,6 +367,10 @@ async def audio_stream_websocket(websocket: WebSocket) -> None:
                 tts_duration = (time.perf_counter() - tts_start) * 1000.0
                 logger.info(f"[TTS Synthesized in {tts_duration:.0f}ms]: {len(audio_bytes)} bytes")
 
+                # Schedule auto-reset of playing flag after audio playback finishes
+                reply_duration = max(1.0, len(audio_bytes) / 32000.0)
+                asyncio.create_task(_auto_clear_playback(reply_duration))
+
                 # A. Send DIRECT audio to browser over WebSocket (Zero-latency instant playback)
                 b64_audio = base64.b64encode(audio_bytes).decode("utf-8")
                 asyncio.run_coroutine_threadsafe(
@@ -347,11 +399,28 @@ async def audio_stream_websocket(websocket: WebSocket) -> None:
     )
     stt_engine.start_recognition()
 
+    chunk_counter = 0
+    total_audio_bytes = 0
     try:
         while True:
             message = await websocket.receive()
             if "bytes" in message and message["bytes"]:
+                chunk_counter += 1
+                total_audio_bytes += len(message["bytes"])
+                if chunk_counter == 1 or chunk_counter % 100 == 0:
+                    logger.info(f"[WS Audio Stream] Received audio chunk #{chunk_counter} ({total_audio_bytes} total bytes) -> writing to STT PushStream")
                 stt_engine.write_audio_chunk(message["bytes"])
+            elif "text" in message and message["text"]:
+                try:
+                    data = json.loads(message["text"])
+                    msg_type = data.get("type")
+                    if msg_type == "playback_start":
+                        active_call_state["is_playing_audio"] = True
+                    elif msg_type == "playback_end":
+                        active_call_state["is_playing_audio"] = False
+                        active_call_state["last_playback_end_time"] = time.time()
+                except Exception:
+                    pass
     except WebSocketDisconnect:
         logger.info("Browser audio WebSocket disconnected.")
     except Exception as e:
@@ -372,7 +441,7 @@ async def get_web_caller_page() -> str:
         <meta charset="UTF-8">
         <meta name="viewport" content="width=device-width, initial-scale=1.0">
         <title>MedFront AI Voice Receptionist (Aura)</title>
-        <script src="/api/telephony/static/bundle.js"></script>
+        <script defer src="/api/telephony/static/bundle.js"></script>
         <style>
             body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #0f172a; color: #f8fafc; display: flex; justify-content: center; align-items: center; min-height: 100vh; margin: 0; padding: 1rem; box-sizing: border-box; }
             .card { background: #1e293b; padding: 2rem; border-radius: 16px; box-shadow: 0 10px 30px rgba(0,0,0,0.5); width: 520px; max-width: 100%; border: 1px solid #334155; }
@@ -396,12 +465,16 @@ async def get_web_caller_page() -> str:
             .tag-tool { background: #7c3aed; }
             
             button { width: 100%; padding: 0.85rem; font-size: 0.95rem; font-weight: 600; border-radius: 8px; border: none; cursor: pointer; transition: all 0.2s; margin-top: 0.5rem; }
-            .btn-init { background: #3b82f6; color: white; }
+            .btn-direct { background: linear-gradient(135deg, #10b981 0%, #059669 100%); color: white; box-shadow: 0 4px 14px rgba(16, 185, 129, 0.35); font-size: 1.05rem; }
+            .btn-direct:hover { background: linear-gradient(135deg, #059669 0%, #047857 100%); }
+            .btn-init { background: #3b82f6; color: white; font-size: 0.85rem; padding: 0.6rem; }
             .btn-init:hover { background: #2563eb; }
-            .btn-call { background: #10b981; color: white; display: none; }
+            .btn-call { background: #10b981; color: white; display: none; font-size: 0.85rem; padding: 0.6rem; }
             .btn-call:hover { background: #059669; }
             .btn-hangup { background: #ef4444; color: white; display: none; }
             .btn-hangup:hover { background: #dc2626; }
+            .webrtc-details { margin-top: 1rem; border: 1px dashed #334155; border-radius: 8px; padding: 0.6rem 0.8rem; font-size: 0.8rem; color: #94a3b8; }
+            .webrtc-details summary { cursor: pointer; font-weight: 600; color: #38bdf8; outline: none; }
             button:disabled { background: #475569; cursor: not-allowed; }
         </style>
     </head>
@@ -415,7 +488,7 @@ async def get_web_caller_page() -> str:
                 <select id="micSelect"></select>
             </div>
 
-            <div id="status" class="status">Click "Initialize Web Client" to begin</div>
+            <div id="status" class="status">Click "Start Voice Call" to begin speaking with Aura</div>
 
             <div class="console-title">
                 <span>Agentic Conversation Stream</span>
@@ -425,9 +498,19 @@ async def get_web_caller_page() -> str:
                 <div style="color: #475569; font-style: italic;">Turn history will appear here in real time as you speak...</div>
             </div>
 
-            <button id="initBtn" class="btn-init" onclick="initClient()">1. Initialize Web Client</button>
-            <button id="callBtn" class="btn-call" onclick="startCall()">2. Call Virtual Receptionist</button>
-            <button id="hangupBtn" class="btn-hangup" onclick="hangUp()">End Call</button>
+            <button id="directCallBtn" class="btn-direct" onclick="startDirectVoiceCall()">🎙️ Start Voice Call (Instant)</button>
+            <button id="hangupBtn" class="btn-hangup" onclick="hangUp()">🔴 End Call</button>
+
+            <details class="webrtc-details">
+                <summary>📞 Advanced: ACS Carrier WebRTC Dialing</summary>
+                <p style="margin: 0.5rem 0; font-size: 0.75rem; color: #64748b;">Tests 2-leg Azure Communication Services Call Automation with WebRTC inbound client.</p>
+                <button id="initBtn" class="btn-init" onclick="initClient()">1. Initialize Web Client</button>
+                <button id="callBtn" class="btn-call" onclick="startCall()">2. Call Virtual Receptionist</button>
+            </details>
+
+            <a href="/dashboard" style="display:block; text-align:center; margin-top:1rem; font-size:0.85rem; color:#38bdf8; text-decoration:none; padding:0.65rem; border:1px solid rgba(56,189,248,0.3); border-radius:8px; background:rgba(56,189,248,0.08); font-weight:600; transition:all 0.2s;">
+                🏥 Open Hospital Dashboard & Patient Records
+            </a>
         </div>
 
         <script>
@@ -443,7 +526,9 @@ async def get_web_caller_page() -> str:
 
             async function populateMicrophones() {
                 try {
-                    await navigator.mediaDevices.getUserMedia({ audio: true });
+                    const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+                    stream.getTracks().forEach(track => track.stop());
+
                     const devices = await navigator.mediaDevices.enumerateDevices();
                     const audioInputs = devices.filter(d => d.kind === 'audioinput');
                     const select = document.getElementById('micSelect');
@@ -457,8 +542,14 @@ async def get_web_caller_page() -> str:
                         }
                         select.appendChild(opt);
                     });
+                    log("Microphone ready. Click 'Start Voice Call (Instant)' to begin.");
                 } catch (e) {
                     console.warn("Could not list audio devices:", e);
+                    if (e.name === 'NotAllowedError' || e.name === 'PermissionDeniedError') {
+                        log("⚠️ Mic permission blocked. Click the lock/mic icon in the browser address bar to allow.");
+                    } else {
+                        log("Microphone status: " + (e.message || "Ready"));
+                    }
                 }
             }
             populateMicrophones();
@@ -484,8 +575,49 @@ async def get_web_caller_page() -> str:
                 return result;
             }
 
+            async function startDirectVoiceCall() {
+                try {
+                    log("Connecting directly to Voice Receptionist pipeline...");
+                    const directBtn = document.getElementById('directCallBtn');
+                    directBtn.disabled = true;
+
+                    // Unified AudioContext initialization
+                    if (!audioContext) {
+                        const AudioCtx = window.AudioContext || window.webkitAudioContext;
+                        try {
+                            audioContext = new AudioCtx({ sampleRate: 16000 });
+                        } catch (e) {
+                            audioContext = new AudioCtx();
+                        }
+                    }
+                    playbackAudioCtx = audioContext;
+                    if (audioContext.state === 'suspended') {
+                        await audioContext.resume();
+                    }
+
+                    await startMicStreaming();
+                    directBtn.style.display = 'none';
+                    document.getElementById('hangupBtn').style.display = 'block';
+                    log("🟢 Call Active! Speak naturally into your microphone.");
+                } catch (err) {
+                    console.error("Direct call error:", err);
+                    log("Call Error: " + err.message);
+                    const directBtn = document.getElementById('directCallBtn');
+                    if (directBtn) {
+                        directBtn.disabled = false;
+                        directBtn.style.display = 'block';
+                    }
+                    document.getElementById('hangupBtn').style.display = 'none';
+                }
+            }
+
             async function initClient() {
                 try {
+                    if (!window.CallClient) {
+                        log("Loading WebRTC bundle... please wait a moment.");
+                        await new Promise(r => setTimeout(r, 1500));
+                        if (!window.CallClient) throw new Error("WebRTC library bundle still loading. Please retry in 2 seconds.");
+                    }
                     log("Fetching VoIP token from backend...");
                     document.getElementById('initBtn').disabled = true;
 
@@ -508,6 +640,7 @@ async def get_web_caller_page() -> str:
                         muteWebRtcRemoteAudio();
                         setInterval(muteWebRtcRemoteAudio, 1000);
                         document.getElementById('callBtn').style.display = 'none';
+                        document.getElementById('directCallBtn').style.display = 'none';
                         document.getElementById('hangupBtn').style.display = 'block';
 
                         currentCall.on('stateChanged', () => {
@@ -515,16 +648,12 @@ async def get_web_caller_page() -> str:
                             if (currentCall.state === 'Connected') {
                                 startMicStreaming();
                             } else if (currentCall.state === 'Disconnected') {
-                                stopMicStreaming();
-                                log("Call disconnected.");
-                                document.getElementById('hangupBtn').style.display = 'none';
-                                document.getElementById('callBtn').style.display = 'block';
-                                document.getElementById('callBtn').disabled = false;
+                                hangUp();
                             }
                         });
                     });
 
-                    log("Web Client Ready! Click 'Call Virtual Receptionist'");
+                    log("Web Client Ready! Click '2. Call Virtual Receptionist'");
                     document.getElementById('initBtn').style.display = 'none';
                     document.getElementById('callBtn').style.display = 'block';
                 } catch (err) {
@@ -555,80 +684,159 @@ async def get_web_caller_page() -> str:
 
             async function startMicStreaming() {
                 try {
-                    document.getElementById('liveIndicator').style.display = 'inline-block';
+                    let stream = null;
+                    const selectEl = document.getElementById('micSelect');
+                    const selectedDeviceId = selectEl ? selectEl.value : null;
                     
+                    try {
+                        const audioConstraints = {
+                            channelCount: 1,
+                            echoCancellation: true,
+                            noiseSuppression: true,
+                            autoGainControl: true,
+                        };
+                        if (selectedDeviceId && selectedDeviceId !== 'default' && selectedDeviceId !== '') {
+                            audioConstraints.deviceId = { ideal: selectedDeviceId };
+                        }
+                        stream = await navigator.mediaDevices.getUserMedia({ audio: audioConstraints });
+                    } catch (e1) {
+                        console.warn("Device-specific constraint failed, falling back to audio:true", e1);
+                        stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+                    }
+                    micStream = stream;
+
                     const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
                     const wsUrl = `${protocol}//${window.location.host}/api/telephony/ws/audio-stream`;
                     audioWs = new WebSocket(wsUrl);
+
+                    audioWs.onopen = () => {
+                        console.log("[WS] Audio stream connected.");
+                        const liveIndicator = document.getElementById('liveIndicator');
+                        if (liveIndicator) liveIndicator.style.display = 'inline-block';
+                    };
+
+                    audioWs.onerror = (err) => {
+                        console.error("[WS] Audio stream error:", err);
+                        log("⚠️ Voice stream connection error.");
+                    };
+
+                    audioWs.onclose = () => {
+                        console.log("[WS] Audio stream closed.");
+                        const liveIndicator = document.getElementById('liveIndicator');
+                        if (liveIndicator) liveIndicator.style.display = 'none';
+                    };
 
                     audioWs.onmessage = (event) => {
                         const msg = JSON.parse(event.data);
                         handleSpeechEvent(msg);
                     };
 
-                    const selectedDeviceId = document.getElementById('micSelect').value;
-                    const audioConstraints = {
-                        channelCount: 1,
-                        echoCancellation: true,
-                        noiseSuppression: true,
-                        autoGainControl: true,
-                    };
-                    if (selectedDeviceId) {
-                        audioConstraints.deviceId = { exact: selectedDeviceId };
+                    if (!audioContext) {
+                        const AudioCtx = window.AudioContext || window.webkitAudioContext;
+                        try {
+                            audioContext = new AudioCtx({ sampleRate: 16000 });
+                        } catch (e) {
+                            audioContext = new AudioCtx();
+                        }
                     }
-
-                    micStream = await navigator.mediaDevices.getUserMedia({ audio: audioConstraints });
-                    audioContext = new (window.AudioContext || window.webkitAudioContext)();
+                    playbackAudioCtx = audioContext;
+                    if (audioContext.state === 'suspended') {
+                        await audioContext.resume();
+                    }
                     const actualRate = audioContext.sampleRate;
-                    log(`Mic active (${actualRate}Hz -> 16000Hz)`);
+                    log(`Mic active (${actualRate}Hz -> 16000Hz). Listening...`);
 
                     const source = audioContext.createMediaStreamSource(micStream);
                     processorNode = audioContext.createScriptProcessor(4096, 1, 1);
                     
+                    let packetCount = 0;
+                    const liveIndicator = document.getElementById('liveIndicator');
                     processorNode.onaudioprocess = (e) => {
                         if (!audioWs || audioWs.readyState !== WebSocket.OPEN) return;
                         const rawFloatData = e.inputBuffer.getChannelData(0);
 
-                        // If AI is speaking, calculate volume to prevent acoustic speaker bleed into mic
-                        if (isAiSpeaking) {
-                            let sumSquares = 0;
-                            for (let i = 0; i < rawFloatData.length; i++) {
-                                sumSquares += rawFloatData[i] * rawFloatData[i];
-                            }
-                            const rms = Math.sqrt(sumSquares / rawFloatData.length);
-                            // If volume is below barge-in threshold (speaker echo), drop it!
-                            if (rms < 0.10) {
-                                return;
+                        // Visual energy indicator
+                        let sumSquares = 0;
+                        for (let i = 0; i < rawFloatData.length; i++) {
+                            sumSquares += rawFloatData[i] * rawFloatData[i];
+                        }
+                        const rms = Math.sqrt(sumSquares / rawFloatData.length);
+                        if (liveIndicator) {
+                            if (rms > 0.015) {
+                                liveIndicator.innerText = "TALKING 🗣️";
+                                liveIndicator.style.background = "#10b981";
+                            } else {
+                                liveIndicator.innerText = "MIC ACTIVE";
+                                liveIndicator.style.background = "#ef4444";
                             }
                         }
 
                         const downsampled = downsampleTo16k(rawFloatData, actualRate);
-
                         const pcmData = new Int16Array(downsampled.length);
                         for (let i = 0; i < downsampled.length; i++) {
                             const s = Math.max(-1, Math.min(1, downsampled[i]));
                             pcmData[i] = s < 0 ? s * 0x8000 : s * 0x7FFF;
                         }
                         audioWs.send(pcmData.buffer);
+
+                        packetCount++;
+                        if (packetCount === 1) {
+                            log("🟢 Audio stream active! Say 'Hello' or 'Book an appointment'...");
+                        }
                     };
 
                     source.connect(processorNode);
+                    const muteGain = audioContext.createGain();
+                    muteGain.gain.value = 0;
+                    processorNode.connect(muteGain);
+                    muteGain.connect(audioContext.destination);
+
                 } catch (err) {
                     console.error("Failed to start mic stream:", err);
                     log("Microphone access error: " + err.message);
+                    throw err;
                 }
             }
 
             function stopMicStreaming() {
-                document.getElementById('liveIndicator').style.display = 'none';
-                if (processorNode) processorNode.disconnect();
-                if (audioContext) audioContext.close();
-                if (micStream) micStream.getTracks().forEach(track => track.stop());
-                if (audioWs) audioWs.close();
+                const liveIndicator = document.getElementById('liveIndicator');
+                if (liveIndicator) liveIndicator.style.display = 'none';
+
+                if (processorNode) {
+                    try { processorNode.disconnect(); } catch (e) {}
+                    processorNode = null;
+                }
+                if (audioContext) {
+                    try { audioContext.close(); } catch (e) {}
+                    audioContext = null;
+                    playbackAudioCtx = null;
+                }
+                if (micStream) {
+                    try {
+                        micStream.getTracks().forEach(track => track.stop());
+                    } catch (e) {}
+                    micStream = null;
+                }
+                if (audioWs) {
+                    try { audioWs.close(); } catch (e) {}
+                    audioWs = null;
+                }
             }
 
             let isAiSpeaking = false;
+            let currentSourceNode = null;
             let playbackAudioCtx = null;
+
+            function stopAiPlayback() {
+                if (currentSourceNode) {
+                    try {
+                        currentSourceNode.stop();
+                        currentSourceNode.disconnect();
+                    } catch (e) {}
+                    currentSourceNode = null;
+                }
+                isAiSpeaking = false;
+            }
 
             function muteWebRtcRemoteAudio() {
                 // Ensure WebRTC remote audio elements are muted so only direct WebSocket audio plays
@@ -639,13 +847,21 @@ async def get_web_caller_page() -> str:
 
             async function playAudioBuffer(base64Data) {
                 try {
+                    stopAiPlayback(); // Interrupt any existing audio buffer immediately
                     muteWebRtcRemoteAudio();
-                    if (!playbackAudioCtx) {
-                        playbackAudioCtx = new (window.AudioContext || window.webkitAudioContext)();
+                    if (!audioContext) {
+                        const AudioCtx = window.AudioContext || window.webkitAudioContext;
+                        audioContext = new AudioCtx();
                     }
+                    playbackAudioCtx = audioContext;
                     if (playbackAudioCtx.state === 'suspended') {
                         await playbackAudioCtx.resume();
                     }
+
+                    if (audioWs && audioWs.readyState === WebSocket.OPEN) {
+                        try { audioWs.send(JSON.stringify({ type: "playback_start" })); } catch(e) {}
+                    }
+
                     const binaryString = window.atob(base64Data);
                     const len = binaryString.length;
                     const bytes = new Uint8Array(len);
@@ -656,11 +872,19 @@ async def get_web_caller_page() -> str:
                     const sourceNode = playbackAudioCtx.createBufferSource();
                     sourceNode.buffer = audioBuffer;
                     sourceNode.connect(playbackAudioCtx.destination);
+                    currentSourceNode = sourceNode;
 
                     isAiSpeaking = true;
                     sourceNode.onended = () => {
-                        // Allow 350ms acoustic room reverb decay before unmuting mic
-                        setTimeout(() => { isAiSpeaking = false; }, 350);
+                        if (currentSourceNode === sourceNode) {
+                            currentSourceNode = null;
+                            setTimeout(() => { 
+                                isAiSpeaking = false; 
+                                if (audioWs && audioWs.readyState === WebSocket.OPEN) {
+                                    try { audioWs.send(JSON.stringify({ type: "playback_end" })); } catch(e) {}
+                                }
+                            }, 100);
+                        }
                     };
                     sourceNode.start(0);
                 } catch (err) {
@@ -672,6 +896,12 @@ async def get_web_caller_page() -> str:
             function handleSpeechEvent(msg) {
                 const box = document.getElementById('transcriptBox');
                 let interimEl = document.getElementById('interimText');
+
+                if (msg.type === 'interrupt') {
+                    console.log("[BARGE-IN] Received interrupt command from server. Stopping audio.");
+                    stopAiPlayback();
+                    return;
+                }
 
                 if (msg.type === 'audio') {
                     playAudioBuffer(msg.data);
@@ -701,9 +931,9 @@ async def get_web_caller_page() -> str:
                     const assistantEl = document.createElement('div');
                     assistantEl.className = 'transcript-entry entry-assistant';
                     
-                    let tags = `<span class="tag">${msg.intent || 'CONVERSATION'}</span>`;
+                    let tags = `<span class="tag">[${msg.intent || 'CONVERSATION'}]</span>`;
                     if (msg.tool_used) {
-                        tags += `<span class="tag tag-tool">TOOL: ${msg.tool_used}</span>`;
+                        tags += ` <span class="tag tag-tool">[Tool: ${msg.tool_used}]</span>`;
                     }
 
                     assistantEl.innerHTML = `<div><strong>Aura:</strong> ${tags}</div><div style="margin-top:4px;">${msg.text}</div>`;
@@ -713,10 +943,40 @@ async def get_web_caller_page() -> str:
             }
 
             async function hangUp() {
+                log("Ending call...");
+                stopAiPlayback();
                 stopMicStreaming();
                 if (currentCall) {
-                    await currentCall.hangUp();
+                    try {
+                        await currentCall.hangUp();
+                    } catch (e) {
+                        console.warn("Call hangup error:", e);
+                    }
+                    currentCall = null;
                 }
+                const hangupBtn = document.getElementById('hangupBtn');
+                if (hangupBtn) hangupBtn.style.display = 'none';
+
+                const directBtn = document.getElementById('directCallBtn');
+                if (directBtn) {
+                    directBtn.style.display = 'block';
+                    directBtn.disabled = false;
+                }
+
+                const callBtn = document.getElementById('callBtn');
+                if (callBtn) {
+                    callBtn.disabled = false;
+                }
+
+                const initBtn = document.getElementById('initBtn');
+                if (initBtn && !callAgent) {
+                    initBtn.disabled = false;
+                }
+
+                const liveIndicator = document.getElementById('liveIndicator');
+                if (liveIndicator) liveIndicator.style.display = 'none';
+
+                log("Call ended. Click 'Start Voice Call (Instant)' to speak again.");
             }
         </script>
     </body>

@@ -71,13 +71,30 @@ class Settings(BaseSettings):
 
     @property
     def is_azure_search_configured(self) -> bool:
-        """Check if Azure AI Search credentials and endpoint are available."""
-        return bool(self.azure_search_endpoint and (self.azure_search_api_key or self.use_managed_identity))
+        """Check if Azure AI Search credentials and endpoint are available and not placeholder strings."""
+        if not self.azure_search_endpoint or "<" in self.azure_search_endpoint:
+            return False
+        if self.use_managed_identity:
+            return True
+        return bool(self.azure_search_api_key and not self.azure_search_api_key.startswith("<"))
 
     @property
     def is_azure_openai_configured(self) -> bool:
-        """Check if Azure OpenAI credentials and endpoint are available."""
-        return bool(self.azure_openai_endpoint and (self.azure_openai_api_key or self.use_managed_identity))
+        """Check if Azure OpenAI credentials and endpoint are available and not placeholder strings."""
+        if not self.azure_openai_endpoint or "<" in self.azure_openai_endpoint:
+            return False
+        if self.use_managed_identity:
+            return True
+        return bool(self.azure_openai_api_key and not self.azure_openai_api_key.startswith("<"))
+
+    @property
+    def is_cosmos_db_configured(self) -> bool:
+        """Check if Azure Cosmos DB credentials and endpoint are available and not placeholder strings."""
+        if not self.cosmos_db_endpoint or "<" in self.cosmos_db_endpoint:
+            return False
+        if self.use_managed_identity:
+            return True
+        return bool(self.cosmos_db_key and not self.cosmos_db_key.startswith("<"))
 
     @property
     def effective_rag_mode(self) -> str:
@@ -87,6 +104,7 @@ class Settings(BaseSettings):
         if self.is_azure_search_configured and self.is_azure_openai_configured:
             return "azure"
         return "local"
+
 
 
 # Singleton instance exported across the application

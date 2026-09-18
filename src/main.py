@@ -5,8 +5,10 @@ Registers routers for isolated modules and provides health check endpoints.
 
 import logging
 from fastapi import FastAPI
+from fastapi.responses import RedirectResponse
 from src.core.config import settings
 from src.telephony.router import router as telephony_router
+from src.dashboard.router import router as dashboard_router
 
 logging.basicConfig(
     level=getattr(logging, settings.log_level.upper(), logging.INFO),
@@ -19,8 +21,15 @@ app = FastAPI(
     description="Enterprise Healthcare Voice AI Receptionist on Microsoft Azure",
 )
 
-# Register Module 1: Telephony Router
+# Register Module 1: Telephony Router & Hospital Dashboard
 app.include_router(telephony_router)
+app.include_router(dashboard_router)
+
+
+@app.get("/", include_in_schema=False)
+async def root():
+    """Redirect root traffic directly to the Hospital & Voice AI Dashboard."""
+    return RedirectResponse(url="/dashboard")
 
 
 @app.get("/health", tags=["Health"])
@@ -30,6 +39,7 @@ async def health_check():
         "status": "healthy",
         "environment": settings.environment,
         "module_1_telephony": "enabled",
+        "hospital_dashboard": "enabled",
     }
 
 

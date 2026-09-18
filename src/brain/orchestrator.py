@@ -84,15 +84,11 @@ class AgenticBrainOrchestrator:
         elif decision.intent in [IntentCategory.CLINIC_INFORMATION, IntentCategory.PATIENT_RECORD_LOOKUP]:
             speech_response, rag_used = self._handle_rag_branch(clean_text, decision)
 
-        elif decision.intent in [
-            IntentCategory.APPOINTMENT_BOOKING,
-            IntentCategory.APPOINTMENT_CANCELLATION,
-            IntentCategory.CHECK_AVAILABILITY,
-        ] or decision.tool_name is not None:
+        elif self._should_execute_tool(decision):
             speech_response, tool_used_name = self._handle_tool_branch(clean_text, decision)
 
         else:
-            # Conversational Branch
+            # Conversational Branch (gathers patient info, doctor preference, or answers queries)
             speech_response = self._handle_conversational_branch(clean_text)
 
         # 4. Save Assistant Output to Memory
@@ -106,6 +102,36 @@ class AgenticBrainOrchestrator:
             tool_used=tool_used_name,
             patient_ingestion_payload=None  # Can be harvested asynchronously post-call
         )
+
+    def _should_execute_tool(self, decision: IntentDecision) -> bool:
+        """Determines if the decision has sufficient parameters to execute a backend tool call."""
+        if not decision.tool_name:
+            return False
+
+        params = decision.tool_parameters or {}
+
+        if decision.tool_name == ToolName.VERIFY_PATIENT_IDENTITY:
+            has_name = bool(params.get("full_name") or (params.get("first_name") and params.get("last_name")))
+            has_dob = bool(params.get("dob") or params.get("date_of_birth"))
+            return has_name and has_dob
+
+        if decision.tool_name == ToolName.BOOK_APPOINTMENT:
+            has_doc = bool(params.get("doctor") or params.get("doctor_name") or params.get("doctor_name_or_specialty"))
+            has_time = bool(params.get("time") or params.get("appointment_time") or params.get("slot_time"))
+            return has_doc and has_time
+
+        if decision.tool_name == ToolName.CANCEL_APPOINTMENT:
+            return bool(params.get("appointment_id"))
+
+        if decision.tool_name == ToolName.CHECK_AVAILABILITY:
+            return bool(
+                params.get("doctor")
+                or params.get("doctor_name")
+                or params.get("specialty")
+                or params.get("date")
+            )
+
+        return True
 
     def _generate_llm_response(self, system_instruction: str, user_content: str, temperature: float = 0.5) -> str:
         """Helper to invoke Azure OpenAI chat completion tuned for low-latency voice synthesis."""
@@ -166,23 +192,33 @@ class AgenticBrainOrchestrator:
     def _handle_tool_branch(self, user_text: str, decision: IntentDecision) -> tuple[str, Optional[str]]:
         """Executes backend tool request and formulates user confirmation message."""
         tool_name = decision.tool_name or ToolName.CHECK_AVAILABILITY
+        params = dict(decision.tool_parameters or {})
+
+        # Automatically inject verified session patient_id if available
+        if self.memory.patient_id and "patient_id" not in params:
+            params["patient_id"] = self.memory.patient_id
+
         tool_req = ToolCallRequest(
             tool_name=tool_name,
-            parameters=decision.tool_parameters
+            parameters=params
         )
 
         tool_res = self.tool_registry.execute_tool(tool_req)
 
-        if not tool_res.success:
-            return (
-                f"I'm sorry, I couldn't complete that request: {tool_res.error_message}. "
-                f"Would you like to try a different time?",
-                tool_name.value
-            )
-
         # Update Session Memory if patient identity verified
-        if tool_name == ToolName.VERIFY_PATIENT_IDENTITY and tool_res.output_data.get("patient_id"):
-            self.memory.update_session(patient_id=tool_res.output_data["patient_id"])
+        if tool_name == ToolName.VERIFY_PATIENT_IDENTITY and tool_res.success:
+            pid = tool_res.output_data.get("patient_id")
+            if pid:
+                self.memory.update_session(patient_id=pid)
+
+        if not tool_res.success:
+            user_prompt = (
+                f"[Tool Execution Notification]: The action '{tool_name.value}' could not be completed because: {tool_res.user_message or tool_res.error_message}\n\n"
+                f"[Conversation History]:\n{self.memory.get_formatted_transcript()}\n\n"
+                f"As Aura the receptionist, explain this politely and guide the caller on the next step in 1-2 spoken sentences:"
+            )
+            reply = self._generate_llm_response(RECEPTIONIST_SYSTEM_PROMPT, user_prompt)
+            return (reply, tool_name.value)
 
         user_prompt = (
             f"[Backend Tool Execution Result]: {tool_res.user_message}\n\n"

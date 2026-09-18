@@ -99,6 +99,8 @@ class AzureOpenAIEmbeddings(BaseEmbeddingProvider):
             raise ValueError("AZURE_OPENAI_ENDPOINT is not configured.")
 
         try:
+            import httpx
+
             if settings.use_managed_identity:
                 token_provider = get_bearer_token_provider(
                     DefaultAzureCredential(), 
@@ -108,6 +110,7 @@ class AzureOpenAIEmbeddings(BaseEmbeddingProvider):
                     azure_endpoint=endpoint,
                     azure_ad_token_provider=token_provider,
                     api_version=settings.azure_openai_api_version,
+                    http_client=httpx.Client(),
                 )
             else:
                 api_key = settings.azure_openai_api_key
@@ -117,28 +120,69 @@ class AzureOpenAIEmbeddings(BaseEmbeddingProvider):
                     azure_endpoint=endpoint,
                     api_key=api_key,
                     api_version=settings.azure_openai_api_version,
+                    http_client=httpx.Client(),
                 )
             self.deployment = settings.azure_openai_embedding_deployment
+            self._local_fallback = LocalDeterministicEmbeddings(dimension=384)
         except Exception as e:
             raise RuntimeError(f"Failed to initialize AzureOpenAI client: {e}") from e
 
+    @staticmethod
+    def _truncate_and_normalize(vector: list[float], target_dim: int = 1536) -> list[float]:
+        """
+        Matryoshka Representation Learning (MRL) shortening safeguard.
+        If an embedding vector exceeds target_dim (e.g. 3072 from text-embedding-3-large),
+        slices the first target_dim floats and re-normalizes using L2 norm.
+        """
+        if len(vector) > target_dim:
+            truncated = vector[:target_dim]
+            norm = math.sqrt(sum(x * x for x in truncated))
+            return [x / norm for x in truncated] if norm > 0 else truncated
+        return vector
+
     def embed_text(self, text: str) -> list[float]:
         if not self.client:
-            raise RuntimeError("AzureOpenAI client is not initialized.")
-        response = self.client.embeddings.create(
-            input=[text],
-            model=self.deployment
-        )
-        return response.data[0].embedding
+            return self._local_fallback.embed_text(text)
+        try:
+            try:
+                response = self.client.embeddings.create(
+                    input=[text],
+                    model=self.deployment,
+                    dimensions=1536,
+                )
+            except Exception as inner_err:
+                logger.debug(f"Direct dimensions=1536 parameter not supported by endpoint ({inner_err}), falling back to MRL truncation.")
+                response = self.client.embeddings.create(
+                    input=[text],
+                    model=self.deployment,
+                )
+            raw_vector = response.data[0].embedding
+            return self._truncate_and_normalize(raw_vector, 1536)
+        except Exception as e:
+            logger.warning(f"Azure OpenAI Embeddings failed ({e}). Falling back to LocalDeterministicEmbeddings.")
+            return self._local_fallback.embed_text(text)
 
     def embed_batch(self, texts: list[str]) -> list[list[float]]:
         if not self.client:
-            raise RuntimeError("AzureOpenAI client is not initialized.")
-        response = self.client.embeddings.create(
-            input=texts,
-            model=self.deployment
-        )
-        return [item.embedding for item in response.data]
+            return self._local_fallback.embed_batch(texts)
+        try:
+            try:
+                response = self.client.embeddings.create(
+                    input=texts,
+                    model=self.deployment,
+                    dimensions=1536,
+                )
+            except Exception as inner_err:
+                logger.debug(f"Direct dimensions=1536 parameter not supported by endpoint ({inner_err}), falling back to MRL truncation.")
+                response = self.client.embeddings.create(
+                    input=texts,
+                    model=self.deployment,
+                )
+            raw_vectors = [item.embedding for item in response.data]
+            return [self._truncate_and_normalize(v, 1536) for v in raw_vectors]
+        except Exception as e:
+            logger.warning(f"Azure OpenAI Embeddings batch failed ({e}). Falling back to LocalDeterministicEmbeddings.")
+            return self._local_fallback.embed_batch(texts)
 
 
 def get_embedding_provider() -> BaseEmbeddingProvider:

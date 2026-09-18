@@ -21,10 +21,10 @@ def run_simulation():
     print("\n--- [SIMULATION] Running End-to-End Simulation Flow ---")
     
     # 1. Verification
-    print("\n1. Verifying Patient 'Robert Chen' (DOB: 1985-04-12)...")
+    print("\n1. Verifying Patient 'Aarav Sharma' (DOB: 1985-04-12)...")
     res1 = execute_tool("verify_patient_identity", {
-        "first_name": "Robert",
-        "last_name": "Chen",
+        "first_name": "Aarav",
+        "last_name": "Sharma",
         "date_of_birth": "1985-04-12"
     })
     print(f"Result: {json.dumps(res1, indent=2)}")
@@ -32,9 +32,9 @@ def run_simulation():
 
     # 2. Check Availability
     target_date = (date.today() + timedelta(days=2)).strftime("%Y-%m-%d")
-    print(f"\n2. Checking Availability for 'Dr. Sarah Smith (Cardiology)' on {target_date}...")
+    print(f"\n2. Checking Availability for 'Dr. Ananya Rao (Cardiology)' on {target_date}...")
     res2 = execute_tool("check_schedule_availability", {
-        "doctor_name_or_specialty": "Dr. Sarah Smith",
+        "doctor_name_or_specialty": "Dr. Ananya Rao",
         "target_date": target_date
     })
     print(f"Result: {json.dumps(res2, indent=2)}")
@@ -44,7 +44,7 @@ def run_simulation():
     print(f"\n3. Booking slot '{available_slot}' for Patient {patient_id}...")
     res3 = execute_tool("book_appointment", {
         "patient_id": patient_id,
-        "doctor_name": "Dr. Sarah Smith",
+        "doctor_name": "Dr. Ananya Rao",
         "appointment_date": target_date,
         "appointment_time": available_slot,
         "reason_for_visit": "Chest tightness and follow-up consultation"
@@ -56,7 +56,7 @@ def run_simulation():
     print(f"\n4. Testing Race Condition: Attempting duplicate booking on same slot '{available_slot}'...")
     res4 = execute_tool("book_appointment", {
         "patient_id": "P-10024",
-        "doctor_name": "Dr. Sarah Smith",
+        "doctor_name": "Dr. Ananya Rao",
         "appointment_date": target_date,
         "appointment_time": available_slot,
         "reason_for_visit": "Another patient booking same slot"

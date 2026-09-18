@@ -63,6 +63,16 @@ class DatabaseService(ABC):
         """List all appointments booked for a specific patient."""
         pass
 
+    @abstractmethod
+    def get_all_patients(self) -> List[PatientRecord]:
+        """List all registered patients in the database."""
+        pass
+
+    @abstractmethod
+    def get_all_appointments(self) -> List[Appointment]:
+        """List all appointments (confirmed and cancelled) in the database."""
+        pass
+
 
 class MockDatabaseService(DatabaseService):
     """
@@ -83,33 +93,33 @@ class MockDatabaseService(DatabaseService):
         patients_data = [
             PatientRecord(
                 id="P-10023",
-                first_name="Robert",
-                last_name="Chen",
+                first_name="Aarav",
+                last_name="Sharma",
                 date_of_birth="1985-04-12",
-                phone_number="+1-555-019-2831",
-                insurance_provider="Blue Cross Blue Shield",
-                insurance_policy_number="BC-889210",
-                emergency_contact="Lisa Chen (+1-555-019-2832)",
+                phone_number="+91-98765-43210",
+                insurance_provider="Star Health Comprehensive",
+                insurance_policy_number="SH-889210",
+                emergency_contact="Neha Sharma (+91-98765-43211)",
             ),
             PatientRecord(
                 id="P-10024",
-                first_name="Emily",
-                last_name="Davis",
-                date_of_birth="1990-11-23",
-                phone_number="+1-555-014-9920",
-                insurance_provider="Aetna Health",
-                insurance_policy_number="AET-443102",
-                emergency_contact="Mark Davis (+1-555-014-9921)",
+                first_name="Priya",
+                last_name="Patel",
+                date_of_birth="1985-11-22",
+                phone_number="+91-98123-45678",
+                insurance_provider="HDFC ERGO Health",
+                insurance_policy_number="HE-443102",
+                emergency_contact="Amit Patel (+91-98123-45679)",
             ),
             PatientRecord(
                 id="P-10025",
-                first_name="Michael",
-                last_name="Gomez",
+                first_name="Vikram",
+                last_name="Malhotra",
                 date_of_birth="1978-07-05",
-                phone_number="+1-555-012-7711",
-                insurance_provider="UnitedHealthcare",
-                insurance_policy_number="UHC-992318",
-                emergency_contact="Maria Gomez (+1-555-012-7712)",
+                phone_number="+91-99887-76655",
+                insurance_provider="Care Health Insurance",
+                insurance_policy_number="CH-992318",
+                emergency_contact="Pooja Malhotra (+91-99887-76656)",
             ),
         ]
         for p in patients_data:
@@ -117,9 +127,9 @@ class MockDatabaseService(DatabaseService):
 
         # 2. Seed Clinicians & Dynamic Schedules (Today + next 14 days)
         doctors = [
-            {"id": "DOC-01", "name": "Dr. Sarah Smith", "specialty": "Cardiology"},
-            {"id": "DOC-02", "name": "Dr. James Wilson", "specialty": "General Practice"},
-            {"id": "DOC-03", "name": "Dr. Elena Rostova", "specialty": "Dermatology"},
+            {"id": "DOC-01", "name": "Dr. Ananya Rao", "specialty": "Cardiology"},
+            {"id": "DOC-02", "name": "Dr. Rajesh Iyer", "specialty": "General Practice"},
+            {"id": "DOC-03", "name": "Dr. Sunita Kapoor", "specialty": "Dermatology"},
         ]
 
         standard_slots = ["09:00 AM", "10:00 AM", "11:30 AM", "02:00 PM", "03:30 PM", "04:30 PM"]
@@ -288,6 +298,12 @@ class MockDatabaseService(DatabaseService):
             if appt.patient_id == patient_id and appt.status == "CONFIRMED"
         ]
 
+    def get_all_patients(self) -> List[PatientRecord]:
+        return list(self._patients.values())
+
+    def get_all_appointments(self) -> List[Appointment]:
+        return list(self._appointments.values())
+
 
 class CosmosDatabaseService(DatabaseService):
     """
@@ -312,13 +328,90 @@ class CosmosDatabaseService(DatabaseService):
                 url=settings.cosmos_db_endpoint, credential=settings.cosmos_db_key
             )
 
-        self.database = self.client.get_database_client(settings.cosmos_db_database_name)
-        self.patients_container = self.database.get_container_client(
-            settings.cosmos_db_patients_container
+        # Auto-provision database and containers with partition keys if they do not exist
+        self.database = self.client.create_database_if_not_exists(settings.cosmos_db_database_name)
+        self.patients_container = self.database.create_container_if_not_exists(
+            id=settings.cosmos_db_patients_container,
+            partition_key=PartitionKey(path="/id"),
         )
-        self.appointments_container = self.database.get_container_client(
-            settings.cosmos_db_appointments_container
+        self.appointments_container = self.database.create_container_if_not_exists(
+            id=settings.cosmos_db_appointments_container,
+            partition_key=PartitionKey(path="/patient_id"),
         )
+        self.schedules_container = self.database.create_container_if_not_exists(
+            id="schedules",
+            partition_key=PartitionKey(path="/doctor_id"),
+        )
+        self._ensure_seed_data()
+
+    def _ensure_seed_data(self):
+        """Seeds initial Indian patients and clinician schedules if container is empty."""
+        try:
+            items = list(self.patients_container.query_items(
+                query="SELECT TOP 1 * FROM c", enable_cross_partition_query=True
+            ))
+            if not items:
+                logger.info("Cosmos DB patients container is empty. Auto-seeding initial fixtures...")
+                patients_data = [
+                    PatientRecord(
+                        id="P-10023",
+                        first_name="Aarav",
+                        last_name="Sharma",
+                        date_of_birth="1985-04-12",
+                        phone_number="+91-98765-43210",
+                        insurance_provider="Star Health Comprehensive",
+                        insurance_policy_number="SH-889210",
+                        emergency_contact="Neha Sharma (+91-98765-43211)",
+                    ),
+                    PatientRecord(
+                        id="P-10024",
+                        first_name="Priya",
+                        last_name="Patel",
+                        date_of_birth="1985-11-22",
+                        phone_number="+91-98123-45678",
+                        insurance_provider="HDFC ERGO Health",
+                        insurance_policy_number="HE-443102",
+                        emergency_contact="Amit Patel (+91-98123-45679)",
+                    ),
+                    PatientRecord(
+                        id="P-10025",
+                        first_name="Vikram",
+                        last_name="Malhotra",
+                        date_of_birth="1978-07-05",
+                        phone_number="+91-99887-76655",
+                        insurance_provider="Care Health Insurance",
+                        insurance_policy_number="CH-992318",
+                        emergency_contact="Pooja Malhotra (+91-99887-76656)",
+                    ),
+                ]
+                for p in patients_data:
+                    self.patients_container.upsert_item(body=p.model_dump())
+
+                doctors = [
+                    {"id": "DOC-01", "name": "Dr. Ananya Rao", "specialty": "Cardiology"},
+                    {"id": "DOC-02", "name": "Dr. Rajesh Iyer", "specialty": "General Practice"},
+                    {"id": "DOC-03", "name": "Dr. Sunita Kapoor", "specialty": "Dermatology"},
+                ]
+                standard_slots = ["09:00 AM", "10:00 AM", "11:30 AM", "02:00 PM", "03:30 PM", "04:30 PM"]
+                today = date.today()
+
+                for offset in range(15):
+                    curr_date = (today + timedelta(days=offset)).strftime("%Y-%m-%d")
+                    for doc in doctors:
+                        slots = [TimeSlot(slot_time=s, is_booked=False) for s in standard_slots]
+                        sched = DoctorSchedule(
+                            doctor_id=doc["id"],
+                            doctor_name=doc["name"],
+                            specialty=doc["specialty"],
+                            date=curr_date,
+                            slots=slots
+                        )
+                        doc_body = sched.model_dump()
+                        doc_body["id"] = f"{doc['id']}_{curr_date}"
+                        self.schedules_container.upsert_item(body=doc_body)
+                logger.info("Successfully seeded Cosmos DB containers.")
+        except Exception as e:
+            logger.warning(f"Could not auto-seed Cosmos DB: {e}")
 
     def get_patient_by_identity(
         self, first_name: str, last_name: str, date_of_birth: str
@@ -354,7 +447,7 @@ class CosmosDatabaseService(DatabaseService):
     def get_doctor_schedules(
         self, doctor_name_or_specialty: str, target_date: str
     ) -> List[DoctorSchedule]:
-        # Implementation for Cosmos DB doctor schedule queries
+        # Query schedules container
         query = (
             "SELECT * FROM c WHERE c.date = @target_date AND "
             "(CONTAINS(LOWER(c.doctor_name), @q) OR CONTAINS(LOWER(c.specialty), @q))"
@@ -364,7 +457,7 @@ class CosmosDatabaseService(DatabaseService):
             {"name": "@q", "value": doctor_name_or_specialty.strip().lower()},
         ]
         items = list(
-            self.database.get_container_client("schedules").query_items(
+            self.schedules_container.query_items(
                 query=query, parameters=params, enable_cross_partition_query=True
             )
         )
@@ -378,7 +471,28 @@ class CosmosDatabaseService(DatabaseService):
         appointment_time: str,
         reason_for_visit: str,
     ) -> Tuple[bool, str, Optional[Appointment]]:
-        # Optimistic concurrency and slot booking on Cosmos DB
+        # Check if slot is already booked (double-booking prevention)
+        query = (
+            "SELECT * FROM c WHERE LOWER(c.doctor_name) = @doc "
+            "AND c.appointment_date = @date AND c.appointment_time = @time AND c.status = 'CONFIRMED'"
+        )
+        params = [
+            {"name": "@doc", "value": doctor_name.strip().lower()},
+            {"name": "@date", "value": appointment_date.strip()},
+            {"name": "@time", "value": appointment_time.strip()},
+        ]
+        existing = list(
+            self.appointments_container.query_items(
+                query=query, parameters=params, enable_cross_partition_query=True
+            )
+        )
+        if existing:
+            return (
+                False,
+                f"Time slot '{appointment_time}' on {appointment_date} is already booked.",
+                None,
+            )
+
         appt_id = f"APT-{uuid.uuid4().hex[:6].upper()}"
         appt = Appointment(
             id=appt_id,
@@ -417,6 +531,24 @@ class CosmosDatabaseService(DatabaseService):
                 query=query,
                 parameters=params,
                 partition_key=patient_id,  # Scoped partition query
+            )
+        )
+        return [Appointment(**item) for item in items]
+
+    def get_all_patients(self) -> List[PatientRecord]:
+        query = "SELECT * FROM c WHERE c.active = true"
+        items = list(
+            self.patients_container.query_items(
+                query=query, enable_cross_partition_query=True
+            )
+        )
+        return [PatientRecord(**item) for item in items]
+
+    def get_all_appointments(self) -> List[Appointment]:
+        query = "SELECT * FROM c"
+        items = list(
+            self.appointments_container.query_items(
+                query=query, enable_cross_partition_query=True
             )
         )
         return [Appointment(**item) for item in items]

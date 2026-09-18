@@ -94,27 +94,27 @@ Parking is validated on the 2nd floor.
     def test_hipaa_patient_isolation_security(self):
         """
         Critical security test:
-        - Querying P-10023 must return Robert Chen's records (hypertension/Lisinopril)
-        - Querying P-10023 must NEVER return Jane Doe's records (P-10024)
+        - Querying P-10023 must return Aarav Sharma's records (hypertension/Lisinopril)
+        - Querying P-10023 must NEVER return Priya Patel's records (P-10024)
         - Querying clinic knowledge must NEVER return patient records
         """
         engine = RAGEngine()
         
-        # 1. Search for Robert Chen
-        results_robert = engine.search_patient(patient_id="P-10023", query="medication hypertension")
-        assert len(results_robert) > 0
-        for r in results_robert:
+        # 1. Search for Aarav Sharma
+        results_aarav = engine.search_patient(patient_id="P-10023", query="medication hypertension")
+        assert len(results_aarav) > 0
+        for r in results_aarav:
             assert r.metadata.patient_id == "P-10023"
             assert r.metadata.patient_id != "P-10024"
-            assert "Jane Doe" not in r.text
+            assert "Priya Patel" not in r.text
 
-        # 2. Search for Jane Doe
-        results_jane = engine.search_patient(patient_id="P-10024", query="allergies")
-        assert len(results_jane) > 0
-        for r in results_jane:
+        # 2. Search for Priya Patel
+        results_priya = engine.search_patient(patient_id="P-10024", query="allergies")
+        assert len(results_priya) > 0
+        for r in results_priya:
             assert r.metadata.patient_id == "P-10024"
             assert r.metadata.patient_id != "P-10023"
-            assert "Robert Chen" not in r.text
+            assert "Aarav Sharma" not in r.text
 
         # 3. Public clinic search must NOT contain any patient_id
         results_clinic = engine.search_clinic(query="hypertension lisinopril")
@@ -130,7 +130,7 @@ Parking is validated on the 2nd floor.
             "query_patient_records",
             {"patient_id": "P-10023", "query": "blood pressure"}
         )
-        assert "Robert Chen" in context
+        assert "Aarav Sharma" in context
         assert "Lisinopril" in context
 
     def test_brain_tool_blocks_missing_patient_id(self):

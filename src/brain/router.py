@@ -29,8 +29,11 @@ class IntentRouter:
         Analyzes the latest user message + memory transcript and returns a structured IntentDecision.
         """
         transcript = memory.get_formatted_transcript(max_turns=6)
+        from datetime import date
+        today_str = date.today().strftime("%Y-%m-%d (%A)")
         
         user_prompt = (
+            f"[Current Reference Date]: {today_str}\n"
             f"[Conversation History]:\n{transcript}\n\n"
             f"[Current Patient Input]: {current_text}"
         )
