@@ -56,12 +56,16 @@
 The codebase is partitioned into **5 isolated modules** so team members can build and test each subsystem independently:
 
 ```
-Azure_VoiceAI/
+MedFront-AI/
 ├── .env.example             # Sanitized environment variable template
+├── pyproject.toml           # Enterprise package configuration
 ├── requirements.txt         # Pinned Azure enterprise dependencies
 ├── SOUL.md                  # Project blueprint & active progress tracker
 ├── CHALLENGES.md            # Technical challenge & interview defense journal
-├── theory_concepts/         # Deep-dive concept learning notes
+├── docs/                    # Architecture & system design documentation
+├── data/                    # Clinical knowledge store & vector cache
+│   ├── knowledge/           # Source clinic policies (.md) and patient records (.json)
+│   └── cache/               # Runtime local vector store cache (.json)
 ├── src/
 │   ├── core/                # Shared configuration (Pydantic), Azure credentials, logging
 │   ├── telephony/           # Module 1: Azure Communication Services call automation

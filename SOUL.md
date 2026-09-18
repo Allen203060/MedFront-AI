@@ -62,6 +62,12 @@ Following the **5-Module Isolated Development Plan**:
   - Live full-duplex conversational voice loop connecting Module 1 + Module 2 + Module 3.
   - Resolved audio blackout deadlocks, 6-second LLM latency, duplicate audio playback, and acoustic mic feedback.
   - Status: *Operational & Stabilized*
+- [x] **Module 5: Action Layer & Database Isolation (Cosmos DB + Tools)**
+  - Target: Function calling integration (`check_schedule_availability`, `book_appointment`, `verify_patient_identity`, `cancel_appointment`, `get_patient_appointments`).
+  - Implementation: Domain models ([src/actions/models.py](file:///c:/Users/Alisha%20Garg/Desktop/Medfront/src/actions/models.py)), Cosmos DB + Mock Store ([src/actions/db_service.py](file:///c:/Users/Alisha%20Garg/Desktop/Medfront/src/actions/db_service.py)), OpenAI Tool Schemas ([src/actions/schemas.py](file:///c:/Users/Alisha%20Garg/Desktop/Medfront/src/actions/schemas.py)), Tools & Dispatcher ([src/actions/tools.py](file:///c:/Users/Alisha%20Garg/Desktop/Medfront/src/actions/tools.py)), Interactive CLI ([src/actions/cli.py](file:///c:/Users/Alisha%20Garg/Desktop/Medfront/src/actions/cli.py)), and 100% passing test suite ([tests/test_actions.py](file:///c:/Users/Alisha%20Garg/Desktop/Medfront/tests/test_actions.py)).
+  - Status: **Completed & Verified** ✅
+- [ ] **The Merger:** Full integration of the 5 modules with real-time bi-directional streaming and barge-in cancellation.
+  - Status: *Pending Modules 1-4*
 
 ---
 
@@ -79,6 +85,8 @@ Following the **5-Module Isolated Development Plan**:
 ---
 
 ## 5. Next Immediate Milestones
-1. Select first isolated module to implement:
-   - **Module 1: Telephony (ACS)** — FastAPI webhook endpoints, inbound call answering, static audio playback.
+1. Select next isolated module to implement:
+   - **Module 3: Brain & Conversation Engine (Azure OpenAI)** — Terminal-based GPT-4o loop wiring up the newly built Module 5 Tool Calling schemas.
    - **Module 2: Speech Processing** — Standalone Azure AI Speech continuous STT and neural TTS benchmark scripts.
+   - **Module 4: Knowledge Base & Scoped RAG** — Dual-index Azure AI Search setup with OData partition filtering.
+   - **Module 1: Telephony (ACS)** — FastAPI webhook endpoints, inbound call answering, static audio playback.
