@@ -81,3 +81,49 @@ Audio from telephony arrives as streaming byte frames over WebSockets. Feeding t
 
 #### 4. Interview Articulation ("The Pitch")
 > *"In telephony AI, latency and natural turn-taking are critical. Using Azure AI Speech SDK, I bypassed disk I/O entirely by feeding raw 16kHz PCM audio directly into an in-memory `PushAudioInputStream`. To solve awkward conversational dead air without cutting patients off mid-sentence, I tuned the voice segmentation silence timeout from the 2-second default down to 800ms. Additionally, I decoupled interim recognition events from final recognition events: interim events act as sub-200ms barge-in triggers to cancel ongoing audio playback, while finalized events trigger the conversational LLM."*
+
+---
+
+### 4. Tri-Module Latency Bottleneck & Substring Echo Gate Deadlock
+- **Date:** 2026-09-17
+- **Module:** The Merger / Brain & Speech Integration
+
+#### 1. The Challenge / Bug
+During live testing of the merged voice loop, the AI became completely inaudible/silent after the greeting, and conversational turns suffered from over 6.5 seconds of dead air latency.
+
+#### 2. The Root Cause & Trade-offs
+1. *Sub-string Echo Trap:* The echo suppression logic used `text.lower() in last_spoken`, which treated common words (e.g. "Hello", "Clinic") from the caller as echoes of the bot's greeting prompt, discarding valid user input.
+2. *State Deadlock:* `is_playing_audio` was gated solely on ACS `PlayCompleted` webhooks. If the ngrok tunnel experienced transient drops, the flag remained `True` permanently, discarding all subsequent speech.
+3. *Synchronous 3-LLM Pipeline:* Each turn sequentially executed `classify_intent` (~1.5s), `_handle_conversational_branch` (~1.5s), and `_harvest_patient_metadata` (~1.8s) synchronously before synthesizing speech.
+
+#### 3. The Solution & Best Practice
+1. Decoupled `_harvest_patient_metadata` from the voice response loop, cutting ~2 seconds of dead air.
+2. Reduced STT silence timeout from 1200ms to 700ms and capped LLM `max_tokens` to 100 for conversational brevity.
+3. Added an automated 5.0s safety watchdog on `is_playing_audio` and replaced substring filtering with exact-match thresholds.
+4. Implemented dual-channel audio delivery: streaming synthesized TTS bytes directly over the browser WebSocket via Web Audio API for instantaneous playback (<100ms).
+
+#### 4. Interview Articulation ("The Pitch")
+> *"In full-duplex voice pipelines, sequential LLM calls and naive echo cancellation will destroy user experience. We diagnosed a false echo suppression bug caused by substring matching on the clinic greeting and eliminated ~6 seconds of latency by decoupling post-turn metadata extraction, calibrating VAD silence thresholds to 700ms, and implementing direct WebSocket audio streaming to complement Azure Call Automation."*
+
+---
+
+### 5. Dual-Audio Playback Echo & Acoustic Feedback Loopback
+- **Date:** 2026-09-17
+- **Module:** The Merger / Audio Streaming & WebRTC
+
+#### 1. The Challenge / Bug
+In the web caller interface, the assistant's voice was played twice in succession (repeated ~1.2 seconds apart), and speaker output leaked into the microphone, causing the AI to respond to its own prompts.
+
+#### 2. The Root Cause & Trade-offs
+1. *Dual Playback Pipeline:* The client was simultaneously playing synthesized audio over Direct WebSocket (`playbackAudioCtx`) and WebRTC Call Automation (`window.CallClient`), offset by cloud telephony latency.
+2. *Acoustic Tail Bleed:* After TTS playback concluded, the microphone captured trailing room reverb and sent it to Azure STT, creating a self-reinforcing conversation loop.
+
+#### 3. The Solution & Best Practice
+1. Tracked `has_websocket_client` state on the server to automatically bypass redundant ACS Call Automation `play_audio` calls when a direct WebSocket stream is active.
+2. Muted WebRTC remote audio elements in the browser during web client sessions.
+3. Added client-side microphone energy gating (`rms < 0.10`) during `isAiSpeaking` with a 350ms post-playback reverb decay buffer.
+4. Added server-side semantic tail echo suppression within an active 1.8-second time window based on token intersection.
+
+#### 4. Interview Articulation ("The Pitch")
+> *"When integrating WebSockets with WebRTC telephony, dual-path playback and acoustic feedback are primary failure modes. We resolved this by unifying playback onto a single channel, implementing client-side mic energy gating while the neural voice is active, and enforcing a time-windowed token-overlap filter to neutralize acoustic reverb without impacting natural barge-in."*
+

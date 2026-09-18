@@ -7,7 +7,7 @@ azure-cosmos==4.9.0
 azure-identity==1.19.0
 
 # --- OpenAI & Agentic Layer ---
-openai==1.54.0
+openai>=1.56.0
 
 # --- Web Framework & Real-Time WebSockets ---
 fastapi==0.115.4

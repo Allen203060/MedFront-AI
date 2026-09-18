@@ -43,23 +43,25 @@ Following the **5-Module Isolated Development Plan**:
   - Context Engine: Integrated **Graft** (`@nanonets/graft`) for persistent Tree-sitter AST knowledge mapping.
   - Documentation: Enterprise [README.md](file:///home/allen20306/allen/Azure_VoiceAI/README.md) with Linux & Windows setup guides.
   - Development Mode: Autonomous Execution Mode enabled in `.agents/rules/rules.md`.
-- [ ] **Module 1: Telephony Isolation (ACS)**
-  - Target: Inbound call answering, static WAV playback, event webhook handling.
-  - Status: *Ready for Implementation*
-- [ ] **Module 2: Speech Processing Isolation (Azure AI Speech)**
-  - Target: Continuous STT, streaming TTS generation, latency benchmarks.
-  - Status: *Ready for Implementation*
-- [ ] **Module 3: Conversation Engine Isolation (Azure OpenAI)**
-  - Target: Terminal-based GPT-4o loop, multi-turn state, persona prompts.
-  - Status: *Ready for Implementation*
+- [x] **Module 1: Telephony Isolation (ACS)**
+  - Target: Inbound call answering, WebRTC browser caller, Call Automation integration.
+  - Status: *Completed*
+- [x] **Module 2: Speech Processing Isolation (Azure AI Speech)**
+  - Target: Continuous STT with 700ms VAD timeout, Neural TTS (`en-IN-NeerjaNeural`), in-memory streaming.
+  - Status: *Completed*
+- [x] **Module 3: Conversation Engine Isolation (Azure OpenAI)**
+  - Target: GPT-4o Agentic Brain, intent routing, persona prompts, decoupled metadata harvester.
+  - Status: *Completed*
 - [ ] **Module 4: Knowledge Base & Scoped RAG Isolation (Azure AI Search)**
   - Target: Dual-index setup (`clinic-knowledge-index` + `patient-records-index`), OData filtering by `patient_id`.
   - Status: *Ready for Implementation*
 - [ ] **Module 5: Action Layer & Database Isolation (Cosmos DB + Tools)**
   - Target: Function calling integration (`check_availability`, `book_appointment`, `verify_patient`).
   - Status: *Ready for Implementation*
-- [ ] **The Merger:** Full integration of the 5 modules with real-time bi-directional streaming and barge-in cancellation.
-  - Status: *Pending Modules 1-5*
+- [x] **Tri-Module Integration (The Voice Merger):**
+  - Live full-duplex conversational voice loop connecting Module 1 + Module 2 + Module 3.
+  - Resolved audio blackout deadlocks, 6-second LLM latency, duplicate audio playback, and acoustic mic feedback.
+  - Status: *Operational & Stabilized*
 
 ---
 

@@ -4,6 +4,7 @@ Handles Call Automation (Web VoIP & PSTN) and Identity/Token generation.
 """
 
 import logging
+import time
 from typing import Dict, Optional
 from azure.communication.callautomation import (
     CallAutomationClient,
@@ -71,10 +72,21 @@ class TelephonyService:
 
         logger.info(f"Initiating Call Automation call to Web User: {caller_user_id}")
         
-        result = self.client.create_call(
-            target_participant=call_invite,
-            callback_url=callback_url,
-        )
+        result = None
+        # Automatic retry for transient TCP idle resets (ConnectionResetError: 104)
+        for attempt in range(2):
+            try:
+                result = self.client.create_call(
+                    target_participant=call_invite,
+                    callback_url=callback_url,
+                )
+                break
+            except Exception as e:
+                if attempt == 0 and ("Connection reset" in str(e) or "104" in str(e)):
+                    logger.warning(f"ACS connection reset on attempt 1, retrying immediately: {e}")
+                    time.sleep(0.3)
+                    continue
+                raise
         
         # Safely extract call_connection_id across SDK variations
         call_connection_id = getattr(result, "call_connection_id", None)

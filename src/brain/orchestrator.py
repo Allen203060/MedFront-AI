@@ -1,15 +1,15 @@
 """
 Agentic Brain Orchestrator for MedFront-AI.
-Coordinates Intent Classification, RAG Retrieval, Tool Action Execution, and Output Generation.
+Coordinates Intent Classification, RAG Retrieval, Tool Action Execution,
+and Output Generation natively on Azure OpenAI (GPT-4o).
 """
-from google.genai import types
 
 import json
-import os
+import logging
 from typing import Optional, Dict, Any
-from dotenv import load_dotenv
-from google import genai
 
+from src.core.config import settings
+from src.brain.azure_client import get_azure_openai_client
 from src.brain.interfaces import RAGProviderInterface, ToolRegistryInterface
 from src.brain.memory import ConversationMemory
 from src.brain.mocks import MockRAGProvider, MockToolRegistry
@@ -27,7 +27,7 @@ from src.brain.prompts import (
 from src.brain.router import IntentRouter
 from src.brain.taxonomy import IntentCategory, ToolName
 
-load_dotenv()
+logger = logging.getLogger("medfront.brain.orchestrator")
 
 
 class AgenticBrainOrchestrator:
@@ -40,13 +40,8 @@ class AgenticBrainOrchestrator:
         rag_provider: Optional[RAGProviderInterface] = None,
         tool_registry: Optional[ToolRegistryInterface] = None,
     ) -> None:
-        self.api_key = os.getenv("GEMINI_API_KEY")
-        self.model_name = os.getenv("GEMINI_MODEL_NAME", "gemini-3.6-flash")
-
-        if not self.api_key:
-            raise ValueError("Missing GEMINI_API_KEY in environment variables.")
-
-        self.client = genai.Client(api_key=self.api_key)
+        self.deployment_name = settings.azure_openai_deployment_name
+        self.client = get_azure_openai_client()
 
         # Core Components
         self.memory = ConversationMemory()
@@ -58,7 +53,8 @@ class AgenticBrainOrchestrator:
 
     def process_turn(self, user_text: str) -> BrainOutput:
         """
-        Executes one full conversation turn: Memory -> Router -> Route Execution -> Response -> Harvest Metadata.
+        Executes one full conversation turn: Memory -> Router -> Route Execution -> Response.
+        Metadata harvesting is decoupled to run without blocking spoken output.
         """
         clean_text = user_text.strip()
         if not clean_text:
@@ -96,37 +92,46 @@ class AgenticBrainOrchestrator:
             speech_response, tool_used_name = self._handle_tool_branch(clean_text, decision)
 
         else:
-            # Fallback: Conversational Branch
+            # Conversational Branch
             speech_response = self._handle_conversational_branch(clean_text)
 
         # 4. Save Assistant Output to Memory
         self.memory.add_assistant_message(speech_response)
 
-        # 5. Harvest Patient Ingestion Metadata
-        ingestion_payload = self._harvest_patient_metadata()
-
+        # 5. Return immediate BrainOutput without waiting for background extraction
         return BrainOutput(
             speech_text=speech_response,
             intent_detected=decision.intent,
             rag_used=rag_used,
             tool_used=tool_used_name,
-            patient_ingestion_payload=ingestion_payload
+            patient_ingestion_payload=None  # Can be harvested asynchronously post-call
         )
+
+    def _generate_llm_response(self, system_instruction: str, user_content: str, temperature: float = 0.5) -> str:
+        """Helper to invoke Azure OpenAI chat completion tuned for low-latency voice synthesis."""
+        if not self.client:
+            return "Thank you for contacting MedFront Clinic. How can I help you today?"
+
+        try:
+            res = self.client.chat.completions.create(
+                model=self.deployment_name,
+                messages=[
+                    {"role": "system", "content": system_instruction},
+                    {"role": "user", "content": user_content}
+                ],
+                temperature=temperature,
+                max_tokens=100,  # Strict cap for fast spoken responses (1-2 sentences)
+            )
+            return res.choices[0].message.content.strip()
+        except Exception as e:
+            logger.error(f"Azure OpenAI call failed: {e}")
+            return "I'm here to assist you at MedFront Clinic. Could you please clarify your request?"
+
 
     def _handle_conversational_branch(self, user_text: str) -> str:
         """Handles casual conversation and general pleasantries."""
-        prompt = (
-            f"{RECEPTIONIST_SYSTEM_PROMPT}\n\n"
-            f"[Conversation History]:\n{self.memory.get_formatted_transcript()}\n"
-            f"Aura:"
-        )
-        try:
-            res = self.client.models.generate_content(
-                model=self.model_name, contents=prompt
-            )
-            return res.text.strip() if res.text else "How can I help you today at MedFront Clinic?"
-        except Exception as e:
-            return f"Thank you for calling MedFront. How can I assist you? (Note: {e})"
+        user_prompt = f"[Conversation History]:\n{self.memory.get_formatted_transcript()}\n\nRespond naturally to the patient:"
+        return self._generate_llm_response(RECEPTIONIST_SYSTEM_PROMPT, user_prompt)
 
     def _handle_rag_branch(self, user_text: str, decision: IntentDecision) -> tuple[str, bool]:
         """Queries RAG provider and formulates natural language answer from retrieved context."""
@@ -149,20 +154,14 @@ class AgenticBrainOrchestrator:
             )
 
         context_str = "\n".join(rag_res.retrieved_chunks)
-        prompt = (
-            f"{RECEPTIONIST_SYSTEM_PROMPT}\n\n"
+        user_prompt = (
             f"[Retrieved Information]:\n{context_str}\n\n"
-            f"[Conversation History]:\n{self.memory.get_formatted_transcript()}\n"
-            f"Answer the patient concisely using the retrieved information above:\nAura:"
+            f"[Conversation History]:\n{self.memory.get_formatted_transcript()}\n\n"
+            f"Answer the patient concisely using the retrieved information above without medical diagnosis:"
         )
 
-        try:
-            res = self.client.models.generate_content(
-                model=self.model_name, contents=prompt
-            )
-            return (res.text.strip() if res.text else context_str, True)
-        except Exception:
-            return (rag_res.retrieved_chunks[0], True)
+        reply = self._generate_llm_response(RECEPTIONIST_SYSTEM_PROMPT, user_prompt)
+        return (reply, True)
 
     def _handle_tool_branch(self, user_text: str, decision: IntentDecision) -> tuple[str, Optional[str]]:
         """Executes backend tool request and formulates user confirmation message."""
@@ -185,37 +184,35 @@ class AgenticBrainOrchestrator:
         if tool_name == ToolName.VERIFY_PATIENT_IDENTITY and tool_res.output_data.get("patient_id"):
             self.memory.update_session(patient_id=tool_res.output_data["patient_id"])
 
-        prompt = (
-            f"{RECEPTIONIST_SYSTEM_PROMPT}\n\n"
+        user_prompt = (
             f"[Backend Tool Execution Result]: {tool_res.user_message}\n\n"
-            f"[Conversation History]:\n{self.memory.get_formatted_transcript()}\n"
-            f"Convey this result politely to the patient in 1-2 spoken sentences:\nAura:"
+            f"[Conversation History]:\n{self.memory.get_formatted_transcript()}\n\n"
+            f"Convey this result politely to the patient in 1-2 spoken sentences:"
         )
 
-        try:
-            res = self.client.models.generate_content(
-                model=self.model_name, contents=prompt
-            )
-            return (res.text.strip() if res.text else tool_res.user_message, tool_name.value)
-        except Exception:
-            return (tool_res.user_message, tool_name.value)
+        reply = self._generate_llm_response(RECEPTIONIST_SYSTEM_PROMPT, user_prompt)
+        return (reply, tool_name.value)
 
     def _harvest_patient_metadata(self) -> Dict[str, Any]:
-        """Harvests structured patient info from transcript for RAG ingestion."""
+        """Harvests structured patient info from transcript using native JSON mode."""
+        if not self.client:
+            return PatientInfoPayload().to_dict()
+
         try:
             transcript = self.memory.get_formatted_transcript(max_turns=10)
-            prompt = f"{PATIENT_INFO_EXTRACTION_PROMPT}\n\n[Transcript]:\n{transcript}"
-
-            res = self.client.models.generate_content(
-                model=self.model_name, contents=prompt
+            res = self.client.chat.completions.create(
+                model=self.deployment_name,
+                messages=[
+                    {"role": "system", "content": PATIENT_INFO_EXTRACTION_PROMPT},
+                    {"role": "user", "content": f"[Transcript]:\n{transcript}"}
+                ],
+                temperature=0.0,
+                response_format={"type": "json_object"},
             )
 
-            raw_text = res.text.strip() if res.text else "{}"
-            if raw_text.startswith("```json"):
-                raw_text = raw_text.replace("```json", "").replace("```", "").strip()
-
+            raw_text = res.choices[0].message.content.strip()
             parsed = json.loads(raw_text)
-            
+
             # Update session memory with harvested details
             if parsed.get("full_name"):
                 self.memory.update_session(verified_name=parsed["full_name"])
@@ -230,7 +227,8 @@ class AgenticBrainOrchestrator:
             )
             return payload.to_dict()
 
-        except Exception:
+        except Exception as e:
+            logger.debug(f"Patient metadata harvesting skipped: {e}")
             return PatientInfoPayload().to_dict()
 
     def reset(self) -> None:
