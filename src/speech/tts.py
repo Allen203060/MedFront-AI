@@ -84,6 +84,8 @@ class TextToSpeechEngine:
     def synthesize_text(self, text: str) -> bytes:
         """
         Synthesizes plain text into complete audio bytes.
+        Automatically selects native neural voices for Hindi (hi-IN-SwaraNeural)
+        or Punjabi (pa-IN-VaaniNeural) if corresponding characters are present.
 
         :param text: The text string to speak.
         :return: Synthesized WAV audio bytes.
@@ -92,9 +94,25 @@ class TextToSpeechEngine:
             raise RuntimeError("SpeechSynthesizer is not initialized. Check AZURE_SPEECH_KEY.")
 
         start_time = time.perf_counter()
-        logger.info(f"Synthesizing text: '{text[:50]}...' using voice {self.voice_name}")
 
-        result = self.synthesizer.speak_text_async(text).get()
+        # Dynamic Voice Selection based on script
+        target_voice = self.voice_name
+        target_lang = "en-IN"
+        if any("\u0900" <= ch <= "\u097F" for ch in text):
+            target_voice = "hi-IN-SwaraNeural"
+            target_lang = "hi-IN"
+        elif any("\u0A00" <= ch <= "\u0A7F" for ch in text):
+            target_voice = "pa-IN-VaaniNeural"
+            target_lang = "pa-IN"
+
+        logger.info(f"Synthesizing text: '{text[:50]}...' using voice {target_voice} ({target_lang})")
+
+        if target_voice != self.voice_name:
+            escaped_text = text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+            ssml = f'<speak version="1.0" xmlns="http://www.w3.org/2001/10/synthesis" xml:lang="{target_lang}"><voice name="{target_voice}">{escaped_text}</voice></speak>'
+            result = self.synthesizer.speak_ssml_async(ssml).get()
+        else:
+            result = self.synthesizer.speak_text_async(text).get()
 
         elapsed_ms = (time.perf_counter() - start_time) * 1000.0
 

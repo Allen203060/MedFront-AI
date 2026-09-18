@@ -6,6 +6,7 @@ and Output Generation natively on Azure OpenAI (GPT-4o).
 
 import json
 import logging
+import re
 from typing import Optional, Dict, Any
 
 from src.core.config import settings
@@ -63,10 +64,31 @@ class AgenticBrainOrchestrator:
                 intent_detected=IntentCategory.UNKNOWN_OR_UNSUPPORTED
             )
 
-        # 1. Add User Input to Memory
+        # 1. Add User Input to Memory & Detect Language
         self.memory.add_user_message(clean_text)
+        self.memory.detect_and_update_language(clean_text)
 
-        # 2. Classify Intent & Extract Parameters via Router
+        # 2. Instant Fast-Path for Conversational Greetings (<50ms instant response)
+        greeting_words = {"hello", "hi", "hey", "namaste", "नमस्ते", "sat sri akal", "sasrikaal", "good morning", "good afternoon", "good evening"}
+        lower_clean = clean_text.lower().strip(".,!?;:'\"")
+        if lower_clean in greeting_words and len(self.memory.messages) <= 3:
+            if self.memory.language == "Hindi":
+                fast_reply = "नमस्ते! मेडफ्रंट हेल्थ क्लिनिक में आपका स्वागत है। मैं ऑरा हूँ। आज मैं आपकी क्या सहायता कर सकती हूँ?"
+            elif self.memory.language == "Punjabi":
+                fast_reply = "ਸਤਿ ਸ਼੍ਰੀ ਅਕਾਲ! ਮੈਡਫਰੰਟ ਹੈਲਥ ਕਲੀਨਿਕ ਵਿੱਚ ਤੁਹਾਡਾ ਸਵਾਗਤ ਹੈ। ਮੈਂ ਔਰਾ ਹਾਂ। ਅੱਜ ਮੈਂ ਤੁਹਾਡੀ ਕੀ ਮਦਦ ਕਰ ਸਕਦੀ ਹਾਂ?"
+            else:
+                fast_reply = "Hello! Welcome to MedFront Health Clinic. My name is Aura. How may I assist you with your appointment today?"
+
+            self.memory.add_assistant_message(fast_reply)
+            return BrainOutput(
+                speech_text=fast_reply,
+                intent_detected=IntentCategory.CASUAL_CONVERSATION,
+                rag_used=False,
+                tool_used=None,
+                patient_ingestion_payload=None,
+            )
+
+        # 3. Classify Intent & Extract Parameters via Router
         decision = self.router.classify_intent(self.memory, clean_text)
         self.memory.update_session(intent=decision.intent)
 
@@ -74,12 +96,42 @@ class AgenticBrainOrchestrator:
         rag_used = False
         tool_used_name = None
 
-        # 3. Route Execution Based on Intent Decision
-        if decision.intent == IntentCategory.EMERGENCY_TRIAGE:
-            speech_response = (
-                "If you are experiencing severe symptoms such as chest pain or difficulty breathing, "
-                "please hang up immediately and dial 911 or go to the nearest emergency room."
+        # 4. Route Execution Based on Intent Decision
+        # Check if caller is providing their phone number to complete a pending appointment booking
+        from src.actions.tools import extract_phone_number
+        extracted_phone = extract_phone_number(clean_text)
+        if extracted_phone:
+            self.memory.update_session(phone_number=extracted_phone)
+
+        if extracted_phone and self.memory.pending_doctor and self.memory.pending_time and not decision.tool_name:
+            decision = IntentDecision(
+                intent=IntentCategory.APPOINTMENT_BOOKING,
+                tool_name=ToolName.BOOK_APPOINTMENT,
+                tool_parameters={
+                    "doctor": self.memory.pending_doctor,
+                    "date": self.memory.pending_date or "tomorrow",
+                    "time": self.memory.pending_time,
+                    "full_name": self.memory.verified_name,
+                    "phone_number": extracted_phone,
+                }
             )
+
+        if decision.intent == IntentCategory.EMERGENCY_TRIAGE:
+            if self.memory.language == "Hindi":
+                speech_response = (
+                    "यदि आपको सीने में दर्द या सांस लेने में गंभीर कठिनाई हो रही है, "
+                    "तो कृपया तुरंत फोन काटें और आपातकालीन सेवा 112 या 108 पर कॉल करें या नजदीकी अस्पताल जाएं।"
+                )
+            elif self.memory.language == "Punjabi":
+                speech_response = (
+                    "ਜੇਕਰ ਤੁਹਾਨੂੰ ਛਾਤੀ ਵਿੱਚ ਦਰਦ ਜਾਂ ਸਾਹ ਲੈਣ ਵਿੱਚ ਗੰਭੀਰ ਮੁਸ਼ਕਲ ਆ ਰਹੀ ਹੈ, "
+                    "ਤਾਂ ਕਿਰਪਾ ਕਰਕੇ ਤੁਰੰਤ ਫ਼ੋਨ ਕੱਟੋ ਅਤੇ ਐਮਰਜੈਂਸੀ ਸੇਵਾਵਾਂ ਨੂੰ ਕਾਲ ਕਰੋ ਜਾਂ ਨੇੜਲੇ ਹਸਪਤਾਲ ਜਾਓ।"
+                )
+            else:
+                speech_response = (
+                    "If you are experiencing severe symptoms such as chest pain or difficulty breathing, "
+                    "please hang up immediately and dial 911 or go to the nearest emergency room."
+                )
 
         elif decision.intent in [IntentCategory.CLINIC_INFORMATION, IntentCategory.PATIENT_RECORD_LOOKUP]:
             speech_response, rag_used = self._handle_rag_branch(clean_text, decision)
@@ -91,10 +143,10 @@ class AgenticBrainOrchestrator:
             # Conversational Branch (gathers patient info, doctor preference, or answers queries)
             speech_response = self._handle_conversational_branch(clean_text)
 
-        # 4. Save Assistant Output to Memory
+        # 5. Save Assistant Output to Memory
         self.memory.add_assistant_message(speech_response)
 
-        # 5. Return immediate BrainOutput without waiting for background extraction
+        # 6. Return immediate BrainOutput without waiting for background extraction
         return BrainOutput(
             speech_text=speech_response,
             intent_detected=decision.intent,
@@ -148,15 +200,35 @@ class AgenticBrainOrchestrator:
                 temperature=temperature,
                 max_tokens=100,  # Strict cap for fast spoken responses (1-2 sentences)
             )
-            return res.choices[0].message.content.strip()
+            content = res.choices[0].message.content or ""
+            return content.strip()
         except Exception as e:
             logger.error(f"Azure OpenAI call failed: {e}")
             return "I'm here to assist you at MedFront Clinic. Could you please clarify your request?"
 
 
+    def _get_language_instruction(self) -> str:
+        """Returns mandatory language enforcement instruction for the LLM prompt."""
+        if self.memory.language == "Hindi":
+            return (
+                "\n[MANDATORY LANGUAGE]: The active conversation language is HINDI. "
+                "You MUST reply in fluent, natural Hindi using Devanagari script (e.g. 'डॉक्टर अनन्या राव कल सुबह 9:00 बजे उपलब्ध हैं...'). "
+                "Do NOT reply in English."
+            )
+        if self.memory.language == "Punjabi":
+            return (
+                "\n[MANDATORY LANGUAGE]: The active conversation language is PUNJABI. "
+                "You MUST reply in fluent, natural Punjabi using Gurmukhi script (e.g. 'ਡਾਕਟਰ ਅਨੰਨਿਆ ਰਾਓ ਕੱਲ੍ਹ ਸਵੇਰੇ 9:00 ਵਜੇ ਉਪਲਬਧ ਹਨ...'). "
+                "Do NOT reply in English."
+            )
+        return "\n[MANDATORY LANGUAGE]: Reply in clear, professional English."
+
     def _handle_conversational_branch(self, user_text: str) -> str:
         """Handles casual conversation and general pleasantries."""
-        user_prompt = f"[Conversation History]:\n{self.memory.get_formatted_transcript()}\n\nRespond naturally to the patient:"
+        user_prompt = (
+            f"[Conversation History]:\n{self.memory.get_formatted_transcript()}\n\n"
+            f"Respond naturally to the patient:{self._get_language_instruction()}"
+        )
         return self._generate_llm_response(RECEPTIONIST_SYSTEM_PROMPT, user_prompt)
 
     def _handle_rag_branch(self, user_text: str, decision: IntentDecision) -> tuple[str, bool]:
@@ -173,17 +245,22 @@ class AgenticBrainOrchestrator:
         rag_res = self.rag_provider.query(rag_req)
 
         if not rag_res.success or not rag_res.retrieved_chunks:
-            return (
-                "I apologize, but I am currently unable to retrieve that information from our records. "
-                "Would you like me to transfer you to a staff member?",
-                True
-            )
+            if self.memory.language == "Hindi":
+                fallback = "माफ़ कीजिए, मुझे इस समय यह जानकारी नहीं मिल पा रही है। क्या आप चाहते हैं कि मैं आपकी बात किसी क्लिनिक स्टाफ से करा दूँ?"
+            elif self.memory.language == "Punjabi":
+                fallback = "ਮਾਫ਼ ਕਰਨਾ, ਮੈਨੂੰ ਇਸ ਸਮੇਂ ਇਹ ਜਾਣਕਾਰੀ ਨਹੀਂ ਮਿਲ ਰਹੀ। ਕੀ ਤੁਸੀਂ ਚਾਹੁੰਦੇ ਹੋ ਕਿ ਮੈਂ ਤੁਹਾਡੀ ਗੱਲ ਕਲੀਨਿਕ ਸਟਾਫ ਨਾਲ ਕਰਵਾਵਾਂ?"
+            else:
+                fallback = (
+                    "I apologize, but I am currently unable to retrieve that information from our records. "
+                    "Would you like me to transfer you to a staff member?"
+                )
+            return (fallback, True)
 
         context_str = "\n".join(rag_res.retrieved_chunks)
         user_prompt = (
             f"[Retrieved Information]:\n{context_str}\n\n"
             f"[Conversation History]:\n{self.memory.get_formatted_transcript()}\n\n"
-            f"Answer the patient concisely using the retrieved information above without medical diagnosis:"
+            f"Answer the patient concisely using the retrieved information above without medical diagnosis:{self._get_language_instruction()}"
         )
 
         reply = self._generate_llm_response(RECEPTIONIST_SYSTEM_PROMPT, user_prompt)
@@ -194,9 +271,62 @@ class AgenticBrainOrchestrator:
         tool_name = decision.tool_name or ToolName.CHECK_AVAILABILITY
         params = dict(decision.tool_parameters or {})
 
-        # Automatically inject verified session patient_id if available
+        from src.actions.tools import extract_phone_number
+        detected_phone = extract_phone_number(user_text)
+        if detected_phone:
+            self.memory.update_session(phone_number=detected_phone)
+            params["phone_number"] = detected_phone
+        elif self.memory.phone_number and "phone_number" not in params:
+            params["phone_number"] = self.memory.phone_number
+
+        # Automatically inject verified session patient_id or verified_name if available
         if self.memory.patient_id and "patient_id" not in params:
             params["patient_id"] = self.memory.patient_id
+        if self.memory.verified_name and "full_name" not in params:
+            params["full_name"] = self.memory.verified_name
+
+        # If name is not in params, check if user text says "for <Name>" or "name is <Name>"
+        if "full_name" not in params and not params.get("patient_id"):
+            name_match = re.search(r'\b(?:name is|for|i am|iam)\s+([A-Z][a-z]+(?:\s+[A-Z][a-z]+)?)', user_text, re.IGNORECASE)
+            if name_match:
+                extracted_name = name_match.group(1).strip()
+                if extracted_name.lower() not in ["dr", "tomorrow", "today", "an appointment", "the appointment"]:
+                    params["full_name"] = extracted_name
+
+        # For appointment booking:
+        if tool_name == ToolName.BOOK_APPOINTMENT:
+            # Merge any pending details from previous turn
+            if self.memory.pending_doctor and "doctor" not in params and "doctor_name" not in params:
+                params["doctor"] = self.memory.pending_doctor
+            if self.memory.pending_date and "date" not in params and "appointment_date" not in params:
+                params["date"] = self.memory.pending_date
+            if self.memory.pending_time and "time" not in params and "appointment_time" not in params:
+                params["time"] = self.memory.pending_time
+
+            doc_to_save = params.get("doctor") or params.get("doctor_name")
+            date_to_save = params.get("date") or params.get("appointment_date")
+            time_to_save = params.get("time") or params.get("appointment_time")
+            name_to_save = params.get("full_name") or self.memory.verified_name
+
+            if doc_to_save or date_to_save or time_to_save or name_to_save:
+                self.memory.update_session(
+                    pending_doctor=doc_to_save,
+                    pending_date=date_to_save,
+                    pending_time=time_to_save,
+                    verified_name=name_to_save
+                )
+
+            # Check if this is an unverified / new patient without a phone number
+            is_unverified = not self.memory.patient_id and not params.get("patient_id")
+            if is_unverified and not params.get("phone_number"):
+                name_disp = (name_to_save or "").strip().title()
+                if self.memory.language == "Hindi":
+                    ask_msg = f"धन्यवाद{' ' + name_disp if name_disp else ''}! एक नए मरीज़ के रूप में आपका पंजीकरण पूरा करने और अपॉइंटमेंट कन्फर्मेशन टिकट भेजने के लिए, क्या मुझे आपका संपर्क फोन नंबर मिल सकता है?"
+                elif self.memory.language == "Punjabi":
+                    ask_msg = f"ਧੰਨਵਾਦ{' ' + name_disp if name_disp else ''}! ਨਵੇਂ ਮਰੀਜ਼ ਵਜੋਂ ਤੁਹਾਡੀ ਰਜਿਸਟ੍ਰੇਸ਼ਨ ਪੂਰੀ ਕਰਨ ਅਤੇ ਟਿਕਟ ਭੇਜਣ ਲਈ, ਕੀ ਮੈਨੂੰ ਤੁਹਾਡਾ ਫ਼ੋਨ ਨੰਬਰ ਮਿਲ ਸਕਦਾ ਹੈ?"
+                else:
+                    ask_msg = f"Thank you{' ' + name_disp if name_disp else ''}! To complete your registration as a new patient and send your appointment confirmation ticket, may I please have your contact phone number?"
+                return (ask_msg, "ask_phone_number")
 
         tool_req = ToolCallRequest(
             tool_name=tool_name,
@@ -205,8 +335,8 @@ class AgenticBrainOrchestrator:
 
         tool_res = self.tool_registry.execute_tool(tool_req)
 
-        # Update Session Memory if patient identity verified
-        if tool_name == ToolName.VERIFY_PATIENT_IDENTITY and tool_res.success:
+        # Update Session Memory if patient identity verified or new patient booked
+        if tool_res.success and tool_res.output_data:
             pid = tool_res.output_data.get("patient_id")
             if pid:
                 self.memory.update_session(patient_id=pid)
@@ -215,15 +345,19 @@ class AgenticBrainOrchestrator:
             user_prompt = (
                 f"[Tool Execution Notification]: The action '{tool_name.value}' could not be completed because: {tool_res.user_message or tool_res.error_message}\n\n"
                 f"[Conversation History]:\n{self.memory.get_formatted_transcript()}\n\n"
-                f"As Aura the receptionist, explain this politely and guide the caller on the next step in 1-2 spoken sentences:"
+                f"As Aura the receptionist, explain this politely and guide the caller on the next step in 1-2 spoken sentences:{self._get_language_instruction()}"
             )
             reply = self._generate_llm_response(RECEPTIONIST_SYSTEM_PROMPT, user_prompt)
             return (reply, tool_name.value)
 
+        # Low-latency optimization: if in English and tool returned a direct spoken message, return it directly!
+        if self.memory.language == "English" and tool_res.user_message:
+            return (tool_res.user_message, tool_name.value)
+
         user_prompt = (
             f"[Backend Tool Execution Result]: {tool_res.user_message}\n\n"
             f"[Conversation History]:\n{self.memory.get_formatted_transcript()}\n\n"
-            f"Convey this result politely to the patient in 1-2 spoken sentences:"
+            f"Convey this result politely to the patient in 1-2 spoken sentences:{self._get_language_instruction()}"
         )
 
         reply = self._generate_llm_response(RECEPTIONIST_SYSTEM_PROMPT, user_prompt)
@@ -246,7 +380,7 @@ class AgenticBrainOrchestrator:
                 response_format={"type": "json_object"},
             )
 
-            raw_text = res.choices[0].message.content.strip()
+            raw_text = (res.choices[0].message.content or "").strip()
             parsed = json.loads(raw_text)
 
             # Update session memory with harvested details

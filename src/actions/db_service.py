@@ -9,12 +9,72 @@ import logging
 import uuid
 from abc import ABC, abstractmethod
 from datetime import datetime, date, timedelta
-from typing import Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
-from src.actions.models import Appointment, DoctorSchedule, PatientRecord, TimeSlot
+from src.actions.models import (
+    Appointment,
+    ClinicalNote,
+    DoctorSchedule,
+    PatientRecord,
+    TimeSlot,
+)
 from src.core.config import settings
 
 logger = logging.getLogger("MedFront.Actions.DB")
+
+
+DEFAULT_CLINIC_DOCTORS = [
+    {
+        "id": "DOC-01",
+        "name": "Dr. Ananya Rao",
+        "specialty": "Cardiology",
+        "qualification": "MD (AIIMS), FACC",
+        "department": "Department of Cardiovascular Sciences",
+        "badge": "Chief Cardiologist",
+        "avatar": "🫀",
+        "color": "#0d9488",
+    },
+    {
+        "id": "DOC-02",
+        "name": "Dr. Rajesh Iyer",
+        "specialty": "General Practice",
+        "qualification": "MBBS, MD (Internal Medicine)",
+        "department": "Internal & Preventative Medicine",
+        "badge": "Senior Consultant Physician",
+        "avatar": "🩺",
+        "color": "#0284c7",
+    },
+    {
+        "id": "DOC-03",
+        "name": "Dr. Sunita Kapoor",
+        "specialty": "Dermatology",
+        "qualification": "MD (Dermatology, Venereology & Leprosy)",
+        "department": "Clinical & Aesthetic Dermatology",
+        "badge": "Lead Dermatologist",
+        "avatar": "🔬",
+        "color": "#8b5cf6",
+    },
+    {
+        "id": "DOC-04",
+        "name": "Dr. Vikram Sen",
+        "specialty": "Orthopedics",
+        "qualification": "MS (Orthopedics), MCh",
+        "department": "Orthopedics & Joint Reconstruction",
+        "badge": "Senior Joint Specialist",
+        "avatar": "🦴",
+        "color": "#f59e0b",
+    },
+    {
+        "id": "DOC-05",
+        "name": "Dr. Meera Nambiar",
+        "specialty": "Pediatrics",
+        "qualification": "MD (Pediatrics), DCH",
+        "department": "Child Health & Adolescent Medicine",
+        "badge": "Consultant Pediatrician",
+        "avatar": "👶",
+        "color": "#10b981",
+    },
+]
 
 
 class DatabaseService(ABC):
@@ -64,14 +124,60 @@ class DatabaseService(ABC):
         pass
 
     @abstractmethod
+    def get_doctor_appointments(
+        self, doctor_name_or_id: str, target_date: Optional[str] = None
+    ) -> List[Appointment]:
+        """List all appointments for a specific doctor."""
+        pass
+
+    @abstractmethod
     def get_all_patients(self) -> List[PatientRecord]:
         """List all registered patients in the database."""
+        pass
+
+    @abstractmethod
+    def register_patient(self, patient: PatientRecord) -> PatientRecord:
+        """Register a new patient into the database."""
         pass
 
     @abstractmethod
     def get_all_appointments(self) -> List[Appointment]:
         """List all appointments (confirmed and cancelled) in the database."""
         pass
+
+    @abstractmethod
+    def create_clinical_note(self, note: ClinicalNote) -> ClinicalNote:
+        """Persist a confirmed clinical SOAP note."""
+        pass
+
+    @abstractmethod
+    def get_patient_clinical_notes(self, patient_id: str) -> List[ClinicalNote]:
+        """Retrieve all longitudinal clinical notes for a patient."""
+        pass
+
+    @abstractmethod
+    def get_doctors(self) -> List[Dict[str, Any]]:
+        """List active clinic doctors."""
+        pass
+
+    @abstractmethod
+    def add_doctor(self, doc_data: Dict[str, Any]) -> Dict[str, Any]:
+        """Add a new doctor and generate availability schedules."""
+        pass
+
+    @abstractmethod
+    def send_appointment_notification(
+        self, appointment_id: str, channel: str = "SMS"
+    ) -> Dict[str, Any]:
+        """Sends SMS / WhatsApp confirmation notification ticket for an appointment."""
+        pass
+
+    @abstractmethod
+    def get_recent_notifications(self, limit: int = 50) -> List[Dict[str, Any]]:
+        """Retrieve recent appointment notification logs."""
+        pass
+
+
 
 
 class MockDatabaseService(DatabaseService):
@@ -83,8 +189,11 @@ class MockDatabaseService(DatabaseService):
 
     def __init__(self):
         self._patients: Dict[str, PatientRecord] = {}
+        self._doctors: List[Dict[str, Any]] = [dict(d) for d in DEFAULT_CLINIC_DOCTORS]
         self._schedules: Dict[Tuple[str, str], DoctorSchedule] = {}  # (doctor_id, date) -> Schedule
         self._appointments: Dict[str, Appointment] = {}  # appointment_id -> Appointment
+        self._clinical_notes: Dict[str, List[ClinicalNote]] = {}  # patient_id -> List[ClinicalNote]
+        self._notifications: List[Dict[str, Any]] = []
         self._seed_default_data()
 
     def _seed_default_data(self):
@@ -121,29 +230,48 @@ class MockDatabaseService(DatabaseService):
                 insurance_policy_number="CH-992318",
                 emergency_contact="Pooja Malhotra (+91-99887-76656)",
             ),
+            PatientRecord(
+                id="P-10026",
+                first_name="Sneha",
+                last_name="Gupta",
+                date_of_birth="1992-03-14",
+                phone_number="+91-98223-34455",
+                insurance_provider="Niva Bupa Health",
+                insurance_policy_number="NB-332190",
+                emergency_contact="Rajesh Gupta (+91-98223-34456)",
+            ),
+            PatientRecord(
+                id="P-10027",
+                first_name="Rahul",
+                last_name="Verma",
+                date_of_birth="1988-09-30",
+                phone_number="+91-97112-23344",
+                insurance_provider="ICICI Lombard",
+                insurance_policy_number="IL-551029",
+                emergency_contact="Sunita Verma (+91-97112-23345)",
+            ),
+            PatientRecord(
+                id="P-10028",
+                first_name="Ananya",
+                last_name="Desai",
+                date_of_birth="2015-05-12",
+                phone_number="+91-98334-45566",
+                insurance_provider="Star Health Comprehensive",
+                insurance_policy_number="SH-889211",
+                emergency_contact="Kavita Desai (+91-98334-45567)",
+            ),
         ]
         for p in patients_data:
             self._patients[p.id] = p
 
         # 2. Seed Clinicians & Dynamic Schedules (Today + next 14 days)
-        doctors = [
-            {"id": "DOC-01", "name": "Dr. Ananya Rao", "specialty": "Cardiology"},
-            {"id": "DOC-02", "name": "Dr. Rajesh Iyer", "specialty": "General Practice"},
-            {"id": "DOC-03", "name": "Dr. Sunita Kapoor", "specialty": "Dermatology"},
-        ]
-
         standard_slots = ["09:00 AM", "10:00 AM", "11:30 AM", "02:00 PM", "03:30 PM", "04:30 PM"]
         today = date.today()
 
         for offset in range(15):
             curr_date = (today + timedelta(days=offset)).strftime("%Y-%m-%d")
-            for doc in doctors:
+            for doc in self._doctors:
                 slots = [TimeSlot(slot_time=s, is_booked=False) for s in standard_slots]
-                # Pre-book one slot for realism
-                if doc["id"] == "DOC-01" and offset == 1:
-                    slots[0].is_booked = True
-                    slots[0].booked_by_patient_id = "P-10024"
-                
                 sched = DoctorSchedule(
                     doctor_id=doc["id"],
                     doctor_name=doc["name"],
@@ -152,6 +280,155 @@ class MockDatabaseService(DatabaseService):
                     slots=slots,
                 )
                 self._schedules[(doc["id"], curr_date)] = sched
+
+        # 3. Seed Confirmed Appointments for Each Doctor
+        today_str = str(today)
+        tmrw_str = (today + timedelta(days=1)).strftime("%Y-%m-%d")
+
+        default_appts = [
+            Appointment(
+                id="APT-C101",
+                patient_id="P-10023",
+                doctor_id="DOC-01",
+                doctor_name="Dr. Ananya Rao",
+                specialty="Cardiology",
+                appointment_date=today_str,
+                appointment_time="09:00 AM",
+                reason_for_visit="Hypertension 6-month checkup & BP review",
+                status="CONFIRMED",
+            ),
+            Appointment(
+                id="APT-C102",
+                patient_id="P-10025",
+                doctor_id="DOC-01",
+                doctor_name="Dr. Ananya Rao",
+                specialty="Cardiology",
+                appointment_date=today_str,
+                appointment_time="11:30 AM",
+                reason_for_visit="Post-coronary stent routine followup",
+                status="CONFIRMED",
+            ),
+            Appointment(
+                id="APT-C103",
+                patient_id="P-10027",
+                doctor_id="DOC-01",
+                doctor_name="Dr. Ananya Rao",
+                specialty="Cardiology",
+                appointment_date=tmrw_str,
+                appointment_time="02:00 PM",
+                reason_for_visit="Exertional palpitations & ECG evaluation",
+                status="CONFIRMED",
+            ),
+            Appointment(
+                id="APT-G201",
+                patient_id="P-10024",
+                doctor_id="DOC-02",
+                doctor_name="Dr. Rajesh Iyer",
+                specialty="General Practice",
+                appointment_date=today_str,
+                appointment_time="10:00 AM",
+                reason_for_visit="Seasonal allergic rhinitis & throat irritation",
+                status="CONFIRMED",
+            ),
+            Appointment(
+                id="APT-G202",
+                patient_id="P-10026",
+                doctor_id="DOC-02",
+                doctor_name="Dr. Rajesh Iyer",
+                specialty="General Practice",
+                appointment_date=today_str,
+                appointment_time="03:30 PM",
+                reason_for_visit="Annual executive physical & blood panel",
+                status="CONFIRMED",
+            ),
+            Appointment(
+                id="APT-D301",
+                patient_id="P-10026",
+                doctor_id="DOC-03",
+                doctor_name="Dr. Sunita Kapoor",
+                specialty="Dermatology",
+                appointment_date=today_str,
+                appointment_time="09:00 AM",
+                reason_for_visit="Eczema flare-up & contact dermatitis",
+                status="CONFIRMED",
+            ),
+            Appointment(
+                id="APT-D302",
+                patient_id="P-10024",
+                doctor_id="DOC-03",
+                doctor_name="Dr. Sunita Kapoor",
+                specialty="Dermatology",
+                appointment_date=today_str,
+                appointment_time="02:00 PM",
+                reason_for_visit="Skin allergen patch test review",
+                status="CONFIRMED",
+            ),
+            Appointment(
+                id="APT-O401",
+                patient_id="P-10027",
+                doctor_id="DOC-04",
+                doctor_name="Dr. Vikram Sen",
+                specialty="Orthopedics",
+                appointment_date=today_str,
+                appointment_time="10:00 AM",
+                reason_for_visit="Right knee ligament strain evaluation",
+                status="CONFIRMED",
+            ),
+            Appointment(
+                id="APT-P501",
+                patient_id="P-10028",
+                doctor_id="DOC-05",
+                doctor_name="Dr. Meera Nambiar",
+                specialty="Pediatrics",
+                appointment_date=today_str,
+                appointment_time="11:30 AM",
+                reason_for_visit="Routine pediatric growth & immunizations",
+                status="CONFIRMED",
+            ),
+        ]
+        for a in default_appts:
+            self._appointments[a.id] = a
+            # Mark the slot booked in schedule
+            sched_key = (a.doctor_id, a.appointment_date)
+            if sched_key in self._schedules:
+                for s in self._schedules[sched_key].slots:
+                    if s.slot_time == a.appointment_time:
+                        s.is_booked = True
+                        s.booked_by_patient_id = a.patient_id
+                        s.appointment_id = a.id
+                        break
+
+        # 4. Seed Clinical Notes
+        self._clinical_notes["P-10023"] = [
+            ClinicalNote(
+                id="NOTE-10023-1",
+                patient_id="P-10023",
+                patient_name="Aarav Sharma",
+                doctor_id="DOC-01",
+                doctor_name="Dr. Ananya Rao",
+                date="2025-08-10",
+                subjective="40-year-old male presents for 6-month hypertension follow-up. Reports mild occasional headaches after long work hours. Compliant with prescribed Lisinopril.",
+                objective="BP 138/88 mmHg, HR 72 bpm, SpO2 98% on room air. BMI 26.8.",
+                assessment="Essential hypertension, suboptimally controlled; Stage 1.",
+                plan="Increase Lisinopril from 10mg daily to 20mg daily orally after breakfast. Advise low sodium DASH diet. Order basic metabolic panel (BMP) in 4 weeks. Review in 6 weeks.",
+                status="CONFIRMED_BY_DOCTOR",
+            )
+        ]
+        self._clinical_notes["P-10024"] = [
+            ClinicalNote(
+                id="NOTE-10024-1",
+                patient_id="P-10024",
+                patient_name="Priya Patel",
+                doctor_id="DOC-02",
+                doctor_name="Dr. Rajesh Iyer",
+                date="2025-07-15",
+                subjective="39-year-old female presents with seasonal allergic rhinitis, frequent sneezing, nasal congestion. Severe allergy to Penicillin.",
+                objective="Vital signs stable, afebrile. Swollen nasal turbinates with clear watery discharge.",
+                assessment="Moderate allergic rhinitis. Penicillin allergy confirmed.",
+                plan="Start Fluticasone propionate nasal spray 50mcg, 2 sprays per nostril once daily. Tab Cetirizine 10mg as needed.",
+                status="CONFIRMED_BY_DOCTOR",
+            )
+        ]
 
     def get_patient_by_identity(
         self, first_name: str, last_name: str, date_of_birth: str
@@ -301,8 +578,109 @@ class MockDatabaseService(DatabaseService):
     def get_all_patients(self) -> List[PatientRecord]:
         return list(self._patients.values())
 
+    def register_patient(self, patient: PatientRecord) -> PatientRecord:
+        self._patients[patient.id] = patient
+        return patient
+
     def get_all_appointments(self) -> List[Appointment]:
         return list(self._appointments.values())
+
+    def get_doctor_appointments(
+        self, doctor_name_or_id: str, target_date: Optional[str] = None
+    ) -> List[Appointment]:
+        q = doctor_name_or_id.strip().lower()
+        res = []
+        for appt in self._appointments.values():
+            if q in appt.doctor_name.lower() or q == appt.doctor_id.lower():
+                if target_date is None or appt.appointment_date == target_date:
+                    res.append(appt)
+        return sorted(res, key=lambda a: (a.appointment_date, a.appointment_time))
+
+    def create_clinical_note(self, note: ClinicalNote) -> ClinicalNote:
+        if note.patient_id not in self._clinical_notes:
+            self._clinical_notes[note.patient_id] = []
+        self._clinical_notes[note.patient_id].insert(0, note)
+        return note
+
+    def get_patient_clinical_notes(self, patient_id: str) -> List[ClinicalNote]:
+        return self._clinical_notes.get(patient_id, [])
+
+    def get_doctors(self) -> List[Dict[str, Any]]:
+        return self._doctors
+
+    def add_doctor(self, doc_data: Dict[str, Any]) -> Dict[str, Any]:
+        doc_id = doc_data.get("id") or f"DOC-0{len(self._doctors) + 1}"
+        new_doc = {
+            "id": doc_id,
+            "name": doc_data["name"].strip(),
+            "specialty": doc_data.get("specialty", "General Practice").strip(),
+            "qualification": doc_data.get("qualification", "MD").strip(),
+            "department": doc_data.get("department", "Clinical Department").strip(),
+            "badge": doc_data.get("badge", "Consultant Specialist").strip(),
+            "avatar": doc_data.get("avatar", "🩺"),
+            "color": doc_data.get("color", "#0d9488"),
+        }
+        self._doctors.append(new_doc)
+
+        # Seed schedules for next 15 days
+        standard_slots = doc_data.get("slots") or ["09:00 AM", "10:00 AM", "11:30 AM", "02:00 PM", "03:30 PM", "04:30 PM"]
+        today = date.today()
+        for offset in range(15):
+            curr_date = (today + timedelta(days=offset)).strftime("%Y-%m-%d")
+            slots = [TimeSlot(slot_time=s, is_booked=False) for s in standard_slots]
+            sched = DoctorSchedule(
+                doctor_id=doc_id,
+                doctor_name=new_doc["name"],
+                specialty=new_doc["specialty"],
+                date=curr_date,
+                slots=slots,
+            )
+            self._schedules[(doc_id, curr_date)] = sched
+        return new_doc
+
+    def send_appointment_notification(
+        self, appointment_id: str, channel: str = "SMS"
+    ) -> Dict[str, Any]:
+        appt = self._appointments.get(appointment_id)
+        if not appt:
+            return {"success": False, "message": f"Appointment {appointment_id} not found."}
+        pat = self._patients.get(appt.patient_id)
+        pat_phone = pat.phone_number if pat else "+91-98765-43210"
+        pat_name = f"{pat.first_name} {pat.last_name}" if pat else f"Patient {appt.patient_id}"
+
+        msg_body = (
+            f"Dear {pat_name}, your appointment with {appt.doctor_name} is confirmed for "
+            f"{appt.appointment_date} at {appt.appointment_time} (Booking Ticket: {appt.id}) at MedFront Health Clinic. "
+            f"Please arrive 10 minutes prior."
+        )
+        logger.info(f"[{channel} NOTIFICATION SENT] To {pat_phone}: '{msg_body}'")
+        appt.notification_sent = True
+        appt.notification_channel = channel
+        appt.notification_recipient = pat_phone
+        appt.notification_ticket_id = appt.id
+
+        record = {
+            "success": True,
+            "channel": channel,
+            "recipient_phone": pat_phone,
+            "patient_name": pat_name,
+            "patient_id": appt.patient_id,
+            "doctor_name": appt.doctor_name,
+            "appointment_id": appt.id,
+            "ticket_number": appt.id,
+            "appointment_date": appt.appointment_date,
+            "appointment_time": appt.appointment_time,
+            "message": msg_body,
+            "status": "DELIVERED",
+            "timestamp": datetime.now().isoformat(),
+        }
+        self._notifications.append(record)
+        return record
+
+    def get_recent_notifications(self, limit: int = 50) -> List[Dict[str, Any]]:
+        return list(reversed(self._notifications[-limit:]))
+
+
 
 
 class CosmosDatabaseService(DatabaseService):
@@ -342,6 +720,11 @@ class CosmosDatabaseService(DatabaseService):
             id="schedules",
             partition_key=PartitionKey(path="/doctor_id"),
         )
+        self.notes_container = self.database.create_container_if_not_exists(
+            id="clinical_notes",
+            partition_key=PartitionKey(path="/patient_id"),
+        )
+        self._doctors = [dict(d) for d in DEFAULT_CLINIC_DOCTORS]
         self._ensure_seed_data()
 
     def _ensure_seed_data(self):
@@ -383,21 +766,46 @@ class CosmosDatabaseService(DatabaseService):
                         insurance_policy_number="CH-992318",
                         emergency_contact="Pooja Malhotra (+91-99887-76656)",
                     ),
+                    PatientRecord(
+                        id="P-10026",
+                        first_name="Sneha",
+                        last_name="Gupta",
+                        date_of_birth="1992-03-14",
+                        phone_number="+91-98223-34455",
+                        insurance_provider="Niva Bupa Health",
+                        insurance_policy_number="NB-332190",
+                        emergency_contact="Rajesh Gupta (+91-98223-34456)",
+                    ),
+                    PatientRecord(
+                        id="P-10027",
+                        first_name="Rahul",
+                        last_name="Verma",
+                        date_of_birth="1988-09-30",
+                        phone_number="+91-97112-23344",
+                        insurance_provider="ICICI Lombard",
+                        insurance_policy_number="IL-551029",
+                        emergency_contact="Sunita Verma (+91-97112-23345)",
+                    ),
+                    PatientRecord(
+                        id="P-10028",
+                        first_name="Ananya",
+                        last_name="Desai",
+                        date_of_birth="2015-05-12",
+                        phone_number="+91-98334-45566",
+                        insurance_provider="Star Health Comprehensive",
+                        insurance_policy_number="SH-889211",
+                        emergency_contact="Kavita Desai (+91-98334-45567)",
+                    ),
                 ]
                 for p in patients_data:
                     self.patients_container.upsert_item(body=p.model_dump())
 
-                doctors = [
-                    {"id": "DOC-01", "name": "Dr. Ananya Rao", "specialty": "Cardiology"},
-                    {"id": "DOC-02", "name": "Dr. Rajesh Iyer", "specialty": "General Practice"},
-                    {"id": "DOC-03", "name": "Dr. Sunita Kapoor", "specialty": "Dermatology"},
-                ]
                 standard_slots = ["09:00 AM", "10:00 AM", "11:30 AM", "02:00 PM", "03:30 PM", "04:30 PM"]
                 today = date.today()
 
                 for offset in range(15):
                     curr_date = (today + timedelta(days=offset)).strftime("%Y-%m-%d")
-                    for doc in doctors:
+                    for doc in DEFAULT_CLINIC_DOCTORS:
                         slots = [TimeSlot(slot_time=s, is_booked=False) for s in standard_slots]
                         sched = DoctorSchedule(
                             doctor_id=doc["id"],
@@ -409,6 +817,85 @@ class CosmosDatabaseService(DatabaseService):
                         doc_body = sched.model_dump()
                         doc_body["id"] = f"{doc['id']}_{curr_date}"
                         self.schedules_container.upsert_item(body=doc_body)
+
+                # Seed default confirmed appointments if container is empty
+                appt_check = list(self.appointments_container.query_items(
+                    query="SELECT TOP 1 * FROM c", enable_cross_partition_query=True
+                ))
+                if not appt_check:
+                    today_str = str(today)
+                    tmrw_str = (today + timedelta(days=1)).strftime("%Y-%m-%d")
+                    default_appts = [
+                        Appointment(
+                            id="APT-C101",
+                            patient_id="P-10023",
+                            doctor_id="DOC-01",
+                            doctor_name="Dr. Ananya Rao",
+                            specialty="Cardiology",
+                            appointment_date=today_str,
+                            appointment_time="09:00 AM",
+                            reason_for_visit="Hypertension 6-month checkup & BP review",
+                            status="CONFIRMED",
+                        ),
+                        Appointment(
+                            id="APT-C102",
+                            patient_id="P-10025",
+                            doctor_id="DOC-01",
+                            doctor_name="Dr. Ananya Rao",
+                            specialty="Cardiology",
+                            appointment_date=today_str,
+                            appointment_time="11:30 AM",
+                            reason_for_visit="Post-coronary stent routine followup",
+                            status="CONFIRMED",
+                        ),
+                        Appointment(
+                            id="APT-G201",
+                            patient_id="P-10024",
+                            doctor_id="DOC-02",
+                            doctor_name="Dr. Rajesh Iyer",
+                            specialty="General Practice",
+                            appointment_date=today_str,
+                            appointment_time="10:00 AM",
+                            reason_for_visit="Seasonal allergic rhinitis & throat irritation",
+                            status="CONFIRMED",
+                        ),
+                        Appointment(
+                            id="APT-D301",
+                            patient_id="P-10026",
+                            doctor_id="DOC-03",
+                            doctor_name="Dr. Sunita Kapoor",
+                            specialty="Dermatology",
+                            appointment_date=today_str,
+                            appointment_time="09:00 AM",
+                            reason_for_visit="Eczema flare-up & contact dermatitis",
+                            status="CONFIRMED",
+                        ),
+                        Appointment(
+                            id="APT-O401",
+                            patient_id="P-10027",
+                            doctor_id="DOC-04",
+                            doctor_name="Dr. Vikram Sen",
+                            specialty="Orthopedics",
+                            appointment_date=today_str,
+                            appointment_time="10:00 AM",
+                            reason_for_visit="Right knee ligament strain evaluation",
+                            status="CONFIRMED",
+                        ),
+                        Appointment(
+                            id="APT-P501",
+                            patient_id="P-10028",
+                            doctor_id="DOC-05",
+                            doctor_name="Dr. Meera Nambiar",
+                            specialty="Pediatrics",
+                            appointment_date=today_str,
+                            appointment_time="11:30 AM",
+                            reason_for_visit="Routine pediatric growth & immunizations",
+                            status="CONFIRMED",
+                        ),
+                    ]
+                    for a in default_appts:
+                        self.appointments_container.upsert_item(body=a.model_dump())
+
                 logger.info("Successfully seeded Cosmos DB containers.")
         except Exception as e:
             logger.warning(f"Could not auto-seed Cosmos DB: {e}")
@@ -552,6 +1039,193 @@ class CosmosDatabaseService(DatabaseService):
             )
         )
         return [Appointment(**item) for item in items]
+
+    def get_doctor_appointments(
+        self, doctor_name_or_id: str, target_date: Optional[str] = None
+    ) -> List[Appointment]:
+        query = "SELECT * FROM c WHERE (CONTAINS(LOWER(c.doctor_name), @doc) OR c.doctor_id = @doc_id)"
+        params = [
+            {"name": "@doc", "value": doctor_name_or_id.strip().lower()},
+            {"name": "@doc_id", "value": doctor_name_or_id.strip()},
+        ]
+        if target_date:
+            query += " AND c.appointment_date = @target_date"
+            params.append({"name": "@target_date", "value": target_date})
+        try:
+            items = list(
+                self.appointments_container.query_items(
+                    query=query, parameters=params, enable_cross_partition_query=True
+                )
+            )
+            res = [Appointment(**item) for item in items]
+            return sorted(res, key=lambda a: (a.appointment_date, a.appointment_time))
+        except Exception as e:
+            logger.warning(f"Error querying doctor appointments in Cosmos DB: {e}")
+            return []
+
+    def register_patient(self, patient: PatientRecord) -> PatientRecord:
+        try:
+            self.patients_container.upsert_item(body=patient.model_dump())
+            logger.info(f"Registered patient {patient.id} in Cosmos DB.")
+        except Exception as e:
+            logger.warning(f"Error registering patient in Cosmos DB: {e}")
+        return patient
+
+    def create_clinical_note(self, note: ClinicalNote) -> ClinicalNote:
+        try:
+            self.notes_container.upsert_item(body=note.model_dump())
+            logger.info(f"Persisted clinical note {note.id} for patient {note.patient_id} in Cosmos DB.")
+        except Exception as e:
+            logger.warning(f"Error persisting clinical note to Cosmos DB: {e}")
+        return note
+
+    def get_patient_clinical_notes(self, patient_id: str) -> List[ClinicalNote]:
+        notes = []
+        try:
+            query = "SELECT * FROM c WHERE c.patient_id = @pid"
+            params = [{"name": "@pid", "value": patient_id}]
+            items = list(
+                self.notes_container.query_items(
+                    query=query, parameters=params, partition_key=patient_id
+                )
+            )
+            for item in items:
+                notes.append(ClinicalNote(**item))
+        except Exception as e:
+            logger.warning(f"Error reading clinical notes from Cosmos DB: {e}")
+
+        # Fallback to sample records if container is new / no dynamic notes yet
+        if not notes:
+            import os
+            records_file = "data/knowledge/sample_patient_records.json"
+            if os.path.exists(records_file):
+                try:
+                    import json
+                    with open(records_file, "r", encoding="utf-8") as f:
+                        all_recs = json.load(f)
+                    for r in all_recs:
+                        if r.get("patient_id") == patient_id and r.get("record_type") == "soap_note":
+                            notes.append(
+                                ClinicalNote(
+                                    id=r.get("id", f"NOTE-{patient_id}-1"),
+                                    patient_id=patient_id,
+                                    patient_name=r.get("patient_name", "Patient"),
+                                    doctor_id="DOC-01",
+                                    doctor_name=r.get("author", "Dr. Ananya Rao"),
+                                    date=r.get("timestamp", "2025-08-10")[:10],
+                                    subjective=r.get("content", ""),
+                                    objective="Vitals recorded during clinical encounter.",
+                                    assessment="Clinical evaluation as noted.",
+                                    plan="Continue prescribed therapeutic plan.",
+                                    status="CONFIRMED_BY_DOCTOR",
+                                )
+                            )
+                except Exception as ex:
+                    logger.debug(f"Fallback reading sample records skipped: {ex}")
+
+        return sorted(notes, key=lambda n: n.created_at, reverse=True)
+
+    def get_doctors(self) -> List[Dict[str, Any]]:
+        return self._doctors
+
+    def add_doctor(self, doc_data: Dict[str, Any]) -> Dict[str, Any]:
+        doc_id = doc_data.get("id") or f"DOC-0{len(self._doctors) + 1}"
+        new_doc = {
+            "id": doc_id,
+            "name": doc_data["name"].strip(),
+            "specialty": doc_data.get("specialty", "General Practice").strip(),
+            "qualification": doc_data.get("qualification", "MD").strip(),
+            "department": doc_data.get("department", "Clinical Department").strip(),
+            "badge": doc_data.get("badge", "Consultant Specialist").strip(),
+            "avatar": doc_data.get("avatar", "🩺"),
+            "color": doc_data.get("color", "#0d9488"),
+        }
+        self._doctors.append(new_doc)
+        # Seed schedules in Cosmos DB schedules_container for next 15 days
+        standard_slots = doc_data.get("slots") or ["09:00 AM", "10:00 AM", "11:30 AM", "02:00 PM", "03:30 PM", "04:30 PM"]
+        today = date.today()
+        for offset in range(15):
+            curr_date = (today + timedelta(days=offset)).strftime("%Y-%m-%d")
+            slots = [TimeSlot(slot_time=s, is_booked=False) for s in standard_slots]
+            sched = DoctorSchedule(
+                doctor_id=doc_id,
+                doctor_name=new_doc["name"],
+                specialty=new_doc["specialty"],
+                date=curr_date,
+                slots=slots,
+            )
+            try:
+                self.schedules_container.upsert_item(body=sched.model_dump())
+            except Exception as e:
+                logger.warning(f"Error persisting new doctor schedule in Cosmos DB: {e}")
+        return new_doc
+
+    def send_appointment_notification(
+        self, appointment_id: str, channel: str = "SMS"
+    ) -> Dict[str, Any]:
+        try:
+            query = "SELECT * FROM c WHERE c.id = @id"
+            params = [{"name": "@id", "value": appointment_id}]
+            items = list(
+                self.appointments_container.query_items(
+                    query=query, parameters=params, enable_cross_partition_query=True
+                )
+            )
+            if not items:
+                return {"success": False, "message": f"Appointment {appointment_id} not found."}
+            appt = items[0]
+            pat_id = appt.get("patient_id")
+            pat_name = f"Patient {pat_id}"
+            pat_phone = "+91-98765-43210"
+            if pat_id:
+                pat = self.get_patient_by_id(pat_id)
+                if pat:
+                    pat_name = f"{pat.first_name} {pat.last_name}"
+                    pat_phone = pat.phone_number
+
+            msg_body = (
+                f"Dear {pat_name}, your appointment with {appt.get('doctor_name')} is confirmed for "
+                f"{appt.get('appointment_date')} at {appt.get('appointment_time')} (Booking Ticket: {appt.get('id')}) at MedFront Health Clinic. "
+                f"Please arrive 10 minutes prior."
+            )
+            logger.info(f"[{channel} NOTIFICATION SENT] To {pat_phone}: '{msg_body}'")
+            record = {
+                "success": True,
+                "channel": channel,
+                "recipient_phone": pat_phone,
+                "patient_name": pat_name,
+                "patient_id": pat_id,
+                "doctor_name": appt.get("doctor_name"),
+                "appointment_id": appt.get("id"),
+                "ticket_number": appt.get("id"),
+                "appointment_date": appt.get("appointment_date"),
+                "appointment_time": appt.get("appointment_time"),
+                "message": msg_body,
+                "status": "DELIVERED",
+                "timestamp": datetime.now().isoformat(),
+            }
+            if not hasattr(self, "_notifications"):
+                self._notifications = []
+            self._notifications.append(record)
+            try:
+                appt["notification_sent"] = True
+                appt["notification_channel"] = channel
+                appt["notification_recipient"] = pat_phone
+                appt["notification_ticket_id"] = appt.get("id")
+                self.appointments_container.upsert_item(body=appt)
+            except Exception as e_upsert:
+                logger.debug(f"Could not persist notification fields on Cosmos appointment: {e_upsert}")
+            return record
+        except Exception as e:
+            logger.error(f"Error sending notification in Cosmos DB: {e}")
+            return {"success": False, "message": str(e)}
+
+    def get_recent_notifications(self, limit: int = 50) -> List[Dict[str, Any]]:
+        if not hasattr(self, "_notifications"):
+            self._notifications = []
+        return list(reversed(self._notifications[-limit:]))
+
+
 
 
 # Factory function to provide active DB service

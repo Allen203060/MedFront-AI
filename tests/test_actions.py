@@ -222,3 +222,36 @@ def test_execute_tool_dispatcher_invalid_args():
     res = execute_tool("verify_patient_identity", {"invalid_param": "test"})
     assert res["success"] is False
     assert res["error_code"] == "PARAMETER_MISMATCH"
+
+
+def test_new_patient_booking_requires_phone_and_sends_notification(target_test_date):
+    """
+    Validates that:
+    1. A first-time patient booking without a phone number is halted with MISSING_PHONE_NUMBER.
+    2. Supplying the phone number registers the new patient, books slot, and dispatches notification ticket.
+    """
+    # 1. Booking attempt without phone number
+    res_no_phone = book_appointment(
+        full_name="Vikramaditya Singhania",
+        doctor_name="Dr. Rajesh Iyer",
+        appointment_date=target_test_date,
+        appointment_time="11:30 AM"
+    )
+    assert res_no_phone.success is False
+    assert res_no_phone.error_code == "MISSING_PHONE_NUMBER"
+    assert "phone number" in res_no_phone.message.lower()
+
+    # 2. Booking attempt with phone number
+    res_with_phone = book_appointment(
+        full_name="Vikramaditya Singhania",
+        phone_number="9876543210",
+        doctor_name="Dr. Rajesh Iyer",
+        appointment_date=target_test_date,
+        appointment_time="11:30 AM"
+    )
+    assert res_with_phone.success is True
+    assert "P-" in res_with_phone.message
+    assert "Ticket ID" in res_with_phone.message
+    assert "notification" in res_with_phone.data
+    assert res_with_phone.data["notification"]["success"] is True
+    assert "98765" in res_with_phone.data["notification"]["recipient_phone"]

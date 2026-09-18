@@ -72,9 +72,13 @@ class SpeechToTextEngine:
         self.push_stream = speechsdk.audio.PushAudioInputStream(stream_format=self.audio_format)
         self.audio_config = speechsdk.audio.AudioConfig(stream=self.push_stream)
 
-        # 4. Instantiate Recognizer
+        # 4. Instantiate Multi-Language Recognizer (English, Hindi, Punjabi)
+        self.auto_detect = speechsdk.AutoDetectSourceLanguageConfig(
+            languages=["en-IN", "hi-IN", "pa-IN"]
+        )
         self.recognizer = speechsdk.SpeechRecognizer(
             speech_config=self.speech_config,
+            auto_detect_source_language_config=self.auto_detect,
             audio_config=self.audio_config,
         )
 
@@ -101,9 +105,9 @@ class SpeechToTextEngine:
             "Dr. Rajesh Iyer", "Dr. Rajesh", "Rajesh Iyer", "Rajesh",
             "Dr. Sunita Kapoor", "Dr. Sunita", "Sunita Kapoor", "Sunita",
             
-            # Clinic branding & regional terms
+            # Clinic branding & general terms
             "MedFront Health Clinic", "MedFront", "AuraCare Health Clinic", "AuraCare",
-            "Koramangala", "Bengaluru", "Bangalore", "Receptionist", "Aura",
+            "Medical Receptionist", "Aura",
             
             # Conversational scheduling & administrative terms
             "Appointment", "Book an appointment", "Schedule availability", "Consultation",
