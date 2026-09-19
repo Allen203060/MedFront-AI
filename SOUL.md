@@ -1,6 +1,6 @@
 # AuraCare AI Receptionist - Project Soul (`SOUL.md`)
 
-*Last Updated: 2026-09-18*
+*Last Updated: 2026-09-19*
 
 ## 1. Project Vision & Identity
 **AuraCare (MedFront)** is an enterprise-grade, HIPAA-compliant clinical Voice AI receptionist and doctor assistant built natively on the Microsoft Azure ecosystem (aligning with Microsoft Certified Azure AI Engineer Associate AI-102 / AI-103 architectures). It replaces fragile third-party AI stacks with a unified, zero-trust Azure foundation designed for low-latency phone triage, patient record retrieval, and automated scheduling.
@@ -78,12 +78,15 @@ Following the **5-Module Isolated Development Plan**:
 ---
 
 ## 5. Active System Status
-- All 29 automated tests (`tests/test_actions.py`, `tests/test_rag.py`, `tests/test_dashboard.py`) passing against live Azure cloud resources.
-- Bi-directional sub-millisecond voice barge-in with server-client interrupt protocol and local Web Audio RMS cutoff.
+- All 44 automated tests (`tests/test_actions.py`, `tests/test_rag.py`, `tests/test_dashboard.py`, `tests/test_language_and_audio.py`) passing against live Azure cloud resources.
+- Zero-Denial Clinical Booking across 9:00 AM – 9:00 PM operating spectrum: 7-day proactive forward availability scanning ensures patients reporting pain or asking open-ended questions ("आप मुझे बताओ आप कब फ्री हो?") are never turned away.
+- Feminine Hindi/Punjabi grammatical inflection directives strictly enforced in system prompts and orchestrator turns (स्त्रीलिंग क्रिया रूप: "देखती हूँ", "करती हूँ").
+- Full 5-doctor clinic schedule seeded over a 30-day horizon in Azure Cosmos DB (`auracare_db`), including Dr. Vikram Sen (Orthopedics) and Dr. Meera Nambiar (Pediatrics).
+- Dual RAG operational mode: Local in-memory vector retrieval (`USE_LOCAL_RAG=true`) eliminates developer environment search VM costs while preserving full Azure AI Search production parity.
+- Bi-directional sub-millisecond voice barge-in with server-client interrupt protocol, single-source exclusive Web Audio playback, and sequence-tagged playback timers to completely eliminate audio overlapping.
+- Grammar-aware multilingual state machine with Indian proper noun immunity (preventing Devanagari names like "Divya" from hijacking English sessions) and phonetically transliterated English recognition ("फ़ोन नंबर इज़").
 - Azure AI Speech PhraseListGrammar domain biasing for Indian specialties, colloquial department terms, and clinic doctor names.
 - Multi-tier relative date normalization ("tomorrow" -> ISO `YYYY-MM-DD`) and fuzzy/phonetic doctor & specialty canonicalization ("Rd Cardo" -> "Cardiology").
-- 17 knowledge chunks indexed in Azure AI Search.
-- Indian patient cohort seeded in Azure Cosmos DB `auracare_db`.
 - Hospital Clinical & Voice AI Portal live at `http://localhost:8000/dashboard` and `/`.
 - Dual-tier Web Calling pipeline active: Instant 1-click 16kHz PCM streaming WebSocket + ACS Call Automation WebRTC carrier dialing with HTML5 iframe permission delegation.
 - Ready for end-to-end telephone & web caller voice calls.

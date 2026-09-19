@@ -308,7 +308,63 @@ During direct browser voice calls, callers reported that their voice was complet
 #### 4. Interview Articulation ("The Pitch")
 > *"In real-time voice architectures, acoustic echo cancellation (AEC) algorithms must balance speaker suppression against user responsiveness. We diagnosed a severe deadlock where an echo suppression heuristic permanently discarded user speech because the bot's initial greeting playback flag was never cleared in direct WebSocket mode. We resolved this by combining three layers of defense: physical timing guards so echo suppression only runs during active speaker output, intent whitelisting so conversational greetings are never dropped, and automated duration-based state clearing. This guarantees 100% speech ingestion while maintaining robust echo protection."*
 
+---
 
+### 14. Audio Overlapping Between Responses & Proper Name Devanagari Language Hijacking
+- **Date:** 2026-09-19
+- **Module:** Module 2 & Module 3: Speech Pipeline, Dynamic Language Detection & Web Audio Playback
 
+#### 1. The Challenge / Bug
+Two critical issues disrupted conversational voice interactions:
+1. *Audio Overlapping Between Turns:* When Aura answered rapidly or when the caller spoke quickly after a slot query, previous audio responses continued playing on the speaker while the new response audio began playing simultaneously, resulting in a cacophony of overlapping voices.
+2. *Unintended Language Hijacking to Hindi on Proper Names:* In an English booking session, when the receptionist asked for the patient's name, the caller said *"Divya"*. Azure AI Speech auto-detected the Indian proper noun and transcribed it in Devanagari script (`"दिव्या।"`). The system immediately flipped the active session language to Hindi, forcing Aura to speak in Hindi for the rest of the conversation and misinterpreting subsequent English answers (*"Phone number is..."* -> `"फ़ोन नंबर इज़..."`) as Hindi.
 
+#### 2. The Root Cause & Trade-offs
+1. *Concurrent Audio Nodes in Web Audio API:* In the browser client (`ui_template.py`), `playPcmAudioBase64` instantiated `consoleAudioCtx.createBufferSource()` as a local variable without retaining a reference to the active node. When subsequent audio packets arrived, or when the user spoke (interim/final speech), the active node was never stopped, allowing multiple audio buffers to play concurrently. Furthermore, `msgType === 'interrupt'` was unhandled.
+2. *Auto-Clear Playback Race Condition:* On the backend, `_auto_clear_playback(delay)` had no generation ID. If Turn 1 spawned a 5-second timer and Turn 2 began at 2 seconds, Turn 1's timer woke up at 5 seconds and falsely reset `is_playing_audio = False` while Turn 2 was still playing.
+3. *Naïve Script Detection in Multilingual Memory:* In `detect_and_update_language()`, the very first check was `if any("\u0900" <= ch <= "\u097F" for ch in text): self.language = "Hindi"`. Azure STT in multilingual mode (`en-IN`, `hi-IN`, `pa-IN`) frequently outputs Indian names (e.g., *"Divya"*, *"Amit"*, *"Sharma"*) or transliterated English phonetics (*"फ़ोन नंबर इज़"*) in Devanagari script. Treating any Devanagari character as a full conversation language switch hijacked English sessions.
+
+#### 3. The Solution & Best Practice
+1. **Single-Source Exclusive Playback & Instant Client Barge-In:**
+   - Implemented `currentConsoleSourceNode` tracking in `ui_template.py` with `stopConsoleAiPlayback()`.
+   - Guaranteed that any new audio payload, incoming user speech (`interim` or `final`), explicit barge-in (`interrupt`), or manual prompt immediately halts and disconnects any playing `AudioBufferSourceNode`.
+   - Wrapped `decodeAudioData` to natively decode Azure's RIFF 16kHz 16-bit Mono WAV format with automatic fallback to float32 PCM.
+2. **Playback Sequence Tracking on Backend:**
+   - Introduced incrementing `playback_id` in `active_call_state`. `_auto_clear_playback` only resets `is_playing_audio` if the current playback ID matches the scheduled task's ID, eliminating race conditions.
+3. **Grammar-Aware Language Detection & Proper Name Immunity:**
+   - *Proper Name Protection:* If the active session is English, single-word or short phrases ($\le 2$ words like `"दिव्या"` or `"दिव्या शर्मा"`) lacking Hindi grammatical markers are classified as proper names/entities and retain the English session language.
+   - *Transliterated English Detection:* Added phonetic token matching (`{"फ़ोन", "नंबर", "इज़", "माय", "नेम", "कार्डियो", "अपॉइंटमेंट", "ओवर"}`) to correctly classify phonetic Devanagari English transcripts as English.
+   - *Grammar-Enforced Indic Switching:* Switching to Hindi or Punjabi now requires either explicit switch phrases (*"speak in hindi"*, *"हिंदी में बात करो"*) or genuine grammatical markers (`{"है", "हैं", "था", "चाहिए", "नमस्ते", "मेरा", "मुझे", "कीजिए"}`).
+
+#### 4. Interview Articulation ("The Pitch")
+> *"In conversational multilingual voice AI, acoustic STT artifacts and audio buffer concurrency often create unexpected failure modes. We solved two intertwined problems: first, audio overlapping, which we eliminated by implementing single-source audio tracking with immediate client-side and server-side barge-in cutoff, alongside sequence-tagged playback timers to eliminate async race conditions. Second, language hijacking, where Azure STT outputting an Indian proper name in Devanagari script caused our agent to incorrectly switch an English conversation into Hindi. We redesigned our language state machine with proper-name immunity and phonetic transliteration recognition, requiring distinct grammatical markers before triggering a language transition. This ensures smooth, predictable code-switching without proper nouns hijacking the conversation."*
+
+---
+
+### 15. Multilingual Gender Inconsistency & Conversational Deadlock in Zero-Denial Clinical Scheduling
+- **Date:** 2026-09-19
+- **Module:** Module 3 (Brain & Orchestration) & Module 5 (Database & Action Layer)
+
+#### 1. The Challenge / Bug
+During live testing in Hindi, two major conversational defects emerged:
+1. *Feminine Voice with Masculine Verb Morphology:* Aura speaks with a female neural TTS voice (`hi-IN-SwaraNeural`), but in multi-turn Hindi conversation she was responding using masculine first-person verbs (e.g. *"मैं उपलब्धता देखता हूँ"*, *"मैं चेक करता हूँ"* instead of *"मैं देखती हूँ"*, *"मैं चेक करती हूँ"*).
+2. *Appointment Denial Deadlock:* When a caller reported knee pain (`"घुटने के दर्द"`) or asked for open dates (`"कोई और दिन का बताओ"`, `"आप मुझे बताओ आप कब फ्री हो?"`), the system denied availability (`"इस तारीख को कोई उपलब्धता नहीं है... मेरे पास उपलब्धता नहीं है"`), repeatedly asking the patient to guess dates rather than proactively offering openings.
+
+#### 2. The Root Cause & Trade-offs
+1. *LLM Default Gender Morphology:* Large language models trained on massive Hindi corpora default to masculine inflections unless explicitly constrained with feminine grammatical directives (`स्त्रीलिंग क्रिया रूप`).
+2. *Incomplete Cosmos DB Seeding:* The clinic seed migration initially populated only 3 doctors (Cardiology, General Practice, Dermatology). DOC-04 (`Dr. Vikram Sen - Orthopedics`) and DOC-05 (`Dr. Meera Nambiar - Pediatrics`) were missing from the schedule collection, causing queries for knee pain or Orthopedics to fail.
+3. *Single-Date Rigid Tool Execution:* `check_schedule_availability` previously executed an exact match lookup only for the specified single day. When a patient asked open-ended scheduling questions, the tool returned zero slots without looking ahead.
+
+#### 3. The Solution & Best Practice
+1. **Feminine Hindi/Punjabi Directives in Prompts & Orchestrator:**
+   - Injected strict grammatical rules across `RECEPTIONIST_SYSTEM_PROMPT` and `_get_language_instruction()` in `orchestrator.py`: Aura is explicitly defined as female, mandating feminine first-person inflections (`मैं देखती हूँ`, `करती हूँ`, `बताती हूँ`, `मदद कर सकती हूँ`, `बुक कर देती हूँ`).
+2. **Comprehensive 5-Doctor Cosmos DB Schedule Seeding (9:00 AM – 9:00 PM):**
+   - Seeded all 5 clinic doctors over a 30-day horizon with 9 daily slots spanning 9:00 AM to 9:00 PM: `["09:00 AM", "10:00 AM", "11:30 AM", "01:00 PM", "02:30 PM", "04:00 PM", "05:30 PM", "07:00 PM", "08:30 PM"]`.
+3. **Proactive 7-Day Forward Heuristic in `check_schedule_availability`:**
+   - If a requested date has no schedule or all slots are booked, the tool automatically scans the next 7 consecutive days, identifies the earliest available slots between 9 AM and 9 PM, and returns them immediately.
+4. **Session State Continuity:**
+   - Saved `pending_doctor` and `pending_date` into session memory upon `CHECK_AVAILABILITY` execution, ensuring multi-turn booking flows remember the suggested physician and date seamlessly.
+
+#### 4. Interview Articulation ("The Pitch")
+> *"Healthcare voice receptionists operate under a strict zero-denial mandate: if a patient is in pain or asks when a doctor is free, the agent must never respond with an empty denial or force the patient into a guessing game. We diagnosed an issue where unseeded specialty schedules and single-date query constraints caused knee pain patients to be turned away. We resolved this by implementing proactive 7-day forward slot scanning across a 9 AM to 9 PM operating spectrum, coupled with session state memory to retain suggested doctor contexts. Simultaneously, we eliminated gender discordance in our Hindi neural voice by enforcing feminine first-person morphology directives in our prompt orchestration pipeline, ensuring natural, empathetic, and continuous patient booking."*
 

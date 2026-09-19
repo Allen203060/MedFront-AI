@@ -212,16 +212,19 @@ async def audio_stream_websocket(websocket: WebSocket) -> None:
         "Hello! Thank you for calling MedFront Health Clinic. "
         "My name is Aura. How may I assist you today?"
     )
+    active_call_state["playback_id"] = active_call_state.get("playback_id", 0) + 1
+    current_pid = active_call_state["playback_id"]
     active_call_state["last_played_text"] = greeting_text
     active_call_state["is_playing_audio"] = True
     active_call_state["last_audio_start_time"] = time.time()
 
-    async def _auto_clear_playback(delay_seconds: float) -> None:
+    async def _auto_clear_playback(delay_seconds: float, p_id: int) -> None:
         """Automatically resets the is_playing_audio state after the audio duration expires."""
         await asyncio.sleep(delay_seconds + 0.3)
-        active_call_state["is_playing_audio"] = False
-        active_call_state["last_playback_end_time"] = time.time()
-        logger.debug("[Audio Playback] Auto-cleared is_playing_audio to False")
+        if active_call_state.get("playback_id") == p_id:
+            active_call_state["is_playing_audio"] = False
+            active_call_state["last_playback_end_time"] = time.time()
+            logger.debug(f"[Audio Playback] Auto-cleared is_playing_audio for sequence #{p_id}")
 
     await websocket.send_json({
         "type": "assistant",
@@ -238,7 +241,7 @@ async def audio_stream_websocket(websocket: WebSocket) -> None:
             await websocket.send_json({"type": "audio", "data": b64_greeting})
             # Schedule auto-reset of playing flag after greeting audio length (16kHz 16-bit mono = 32000 bytes/sec)
             greeting_duration = max(1.0, len(greeting_audio) / 32000.0)
-            asyncio.create_task(_auto_clear_playback(greeting_duration))
+            asyncio.create_task(_auto_clear_playback(greeting_duration, current_pid))
         except Exception as e:
             logger.warning(f"Could not synthesize initial WebSocket greeting audio: {e}")
             active_call_state["is_playing_audio"] = False
@@ -360,6 +363,8 @@ async def audio_stream_websocket(websocket: WebSocket) -> None:
         # 6. Synthesize Neural TTS (Azure AI Speech)
         if tts_engine and settings.azure_speech_key:
             try:
+                active_call_state["playback_id"] = active_call_state.get("playback_id", 0) + 1
+                turn_pid = active_call_state["playback_id"]
                 active_call_state["last_played_text"] = speech_reply
                 active_call_state["is_playing_audio"] = True
                 active_call_state["last_audio_start_time"] = time.time()
@@ -378,7 +383,7 @@ async def audio_stream_websocket(websocket: WebSocket) -> None:
 
                 # Schedule auto-reset of playing flag after audio playback finishes
                 reply_duration = max(1.0, len(audio_bytes) / 32000.0)
-                asyncio.run_coroutine_threadsafe(_auto_clear_playback(reply_duration), loop)
+                asyncio.run_coroutine_threadsafe(_auto_clear_playback(reply_duration, turn_pid), loop)
 
                 # B. Only trigger ACS play_audio for external telephony calls (when no direct WebSocket exists)
                 call_id = active_call_state.get("call_connection_id")
@@ -1164,6 +1169,7 @@ async def get_web_caller_page() -> str:
 
             // Real-time user speech interim display
             if (msg.type === 'interim') {
+                stopAiPlayback();
                 if (!interimEl) {
                     interimEl = document.createElement('div');
                     interimEl.id = 'interimText';
@@ -1177,6 +1183,7 @@ async def get_web_caller_page() -> str:
 
             // Finalized user speech turn
             if (msg.type === 'final' || msg.type === 'user' || msg.event === 'user') {
+                stopAiPlayback();
                 if (interimEl) interimEl.remove();
 
                 const finalEl = document.createElement('div');

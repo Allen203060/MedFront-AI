@@ -128,7 +128,7 @@ SPECIALTY_SYNONYMS = {
     "skin clinic": "Dermatology",
     "skin specialist": "Dermatology",
 
-    # Orthopedics synonyms
+    # Orthopedics synonyms (English & Hindi)
     "ortho": "Orthopedics",
     "orthopedics": "Orthopedics",
     "orthopaedics": "Orthopedics",
@@ -143,8 +143,25 @@ SPECIALTY_SYNONYMS = {
     "orthopedic surgeon": "Orthopedics",
     "knee": "Orthopedics",
     "spine": "Orthopedics",
+    "ऑर्थोपेडिक्स": "Orthopedics",
+    "ऑर्थोपेडिक": "Orthopedics",
+    "ऑर्थो": "Orthopedics",
+    "हड्डी": "Orthopedics",
+    "हड्डियों": "Orthopedics",
+    "हड्डी रोग": "Orthopedics",
+    "घुटना": "Orthopedics",
+    "घुटने": "Orthopedics",
+    "घुटने का दर्द": "Orthopedics",
+    "घुटने के दर्द": "Orthopedics",
+    "जोड़": "Orthopedics",
+    "जोड़ों": "Orthopedics",
+    "जोड़ों का दर्द": "Orthopedics",
+    "जोड़ों के दर्द": "Orthopedics",
+    "कमर": "Orthopedics",
+    "कमर दर्द": "Orthopedics",
+    "रीढ़": "Orthopedics",
 
-    # Pediatrics synonyms
+    # Pediatrics synonyms (English & Hindi)
     "pediatrics": "Pediatrics",
     "paediatrics": "Pediatrics",
     "pediatric": "Pediatrics",
@@ -157,6 +174,34 @@ SPECIALTY_SYNONYMS = {
     "baby": "Pediatrics",
     "kids": "Pediatrics",
     "kid": "Pediatrics",
+    "पीडियाट्रिक्स": "Pediatrics",
+    "पीडियाट्रिशियन": "Pediatrics",
+    "बच्चा": "Pediatrics",
+    "बच्चों": "Pediatrics",
+    "शिशु": "Pediatrics",
+    "बाल रोग": "Pediatrics",
+
+    # Cardiology synonyms (Hindi additions)
+    "कार्डियोलॉजी": "Cardiology",
+    "कार्डियो": "Cardiology",
+    "कार्डियोलॉजिस्ट": "Cardiology",
+    "दिल": "Cardiology",
+    "हार्ट": "Cardiology",
+
+    # Dermatology synonyms (Hindi additions)
+    "डर्मेटोलॉजी": "Dermatology",
+    "डर्मेटोलॉजिस्ट": "Dermatology",
+    "डर्मा": "Dermatology",
+    "त्वचा": "Dermatology",
+    "चर्म": "Dermatology",
+    "चर्म रोग": "Dermatology",
+
+    # General Practice synonyms (Hindi additions)
+    "सामान्य": "General Practice",
+    "फिजिशियन": "General Practice",
+    "बुखार": "General Practice",
+    "सर्दी": "General Practice",
+    "खांसी": "General Practice",
 }
 
 DOCTOR_ALIASES = {
@@ -257,13 +302,15 @@ def _normalize_target_date(d_str: Optional[str]) -> str:
 
     s = d_str.strip().lower()
 
-    # Common relative keywords
-    if s in ["today", "this day"]:
+    # Common relative keywords (English & Hindi)
+    if s in ["today", "this day", "आज", "aaj"]:
         return today.strftime("%Y-%m-%d")
-    if s in ["tomorrow", "tmrw", "next day"]:
+    if s in ["tomorrow", "tmrw", "next day", "कल", "kal", "अगले दिन"]:
         return (today + timedelta(days=1)).strftime("%Y-%m-%d")
-    if s in ["day after tomorrow", "overmorrow"]:
+    if s in ["day after tomorrow", "overmorrow", "परसों", "parso", "parson"]:
         return (today + timedelta(days=2)).strftime("%Y-%m-%d")
+    if any(k in s for k in ["कोई और दिन", "अगला", "next", "free", "उपलब्ध", "next_available", "earliest", "any day", "kab free", "कब फ्री"]):
+        return (today + timedelta(days=1)).strftime("%Y-%m-%d")
 
     # Named weekdays (e.g. 'monday', 'next monday')
     weekdays = {
@@ -392,6 +439,24 @@ def check_schedule_availability(
             doctor_name_or_specialty=raw_doc, target_date=iso_date
         )
 
+    # If no schedule found on target date, proactively scan forward across the next 7 days
+    if not schedules:
+        from datetime import datetime, timedelta
+        try:
+            base_dt = datetime.strptime(iso_date, "%Y-%m-%d").date()
+        except Exception:
+            base_dt = date.today()
+
+        for offset in range(1, 8):
+            future_date = (base_dt + timedelta(days=offset)).strftime("%Y-%m-%d")
+            f_scheds = db.get_doctor_schedules(doctor_name_or_specialty=canonical_query, target_date=future_date)
+            if not f_scheds and canonical_query != raw_doc:
+                f_scheds = db.get_doctor_schedules(doctor_name_or_specialty=raw_doc, target_date=future_date)
+            if f_scheds:
+                schedules = f_scheds
+                iso_date = future_date
+                break
+
     if not schedules:
         return ActionResult(
             success=False,
@@ -417,10 +482,64 @@ def check_schedule_availability(
         if open_slots:
             slot_summary.append(f"{sched.doctor_name} ({sched.specialty}): {', '.join(open_slots[:4])}")
 
+    # If all slots are full on the target date, proactively find the earliest next available opening!
     if total_open_slots == 0:
+        from datetime import datetime, timedelta
+        try:
+            base_dt = datetime.strptime(iso_date, "%Y-%m-%d").date()
+        except Exception:
+            base_dt = date.today()
+
+        next_available_results = []
+        next_open_slots = []
+        next_date_str = None
+        next_doc_name = canonical_query
+        next_specialty = "Specialist"
+
+        for offset in range(1, 8):
+            future_date = (base_dt + timedelta(days=offset)).strftime("%Y-%m-%d")
+            f_scheds = db.get_doctor_schedules(doctor_name_or_specialty=canonical_query, target_date=future_date)
+            if not f_scheds and canonical_query != raw_doc:
+                f_scheds = db.get_doctor_schedules(doctor_name_or_specialty=raw_doc, target_date=future_date)
+            
+            for fs in f_scheds:
+                avail = [s.slot_time for s in fs.slots if not s.is_booked]
+                if avail:
+                    next_date_str = future_date
+                    next_open_slots = avail
+                    next_doc_name = fs.doctor_name
+                    next_specialty = fs.specialty
+                    next_available_results.append({
+                        "doctor_id": fs.doctor_id,
+                        "doctor_name": fs.doctor_name,
+                        "specialty": fs.specialty,
+                        "date": future_date,
+                        "available_slots": avail,
+                    })
+                    break
+            if next_open_slots:
+                break
+
+        if next_open_slots:
+            preview = ", ".join(next_open_slots[:4])
+            return ActionResult(
+                success=True,
+                message=(
+                    f"Slots on {iso_date} are currently full for {canonical_query}, but the next available opening "
+                    f"with {next_doc_name} ({next_specialty}) is on {next_date_str}: {preview}. "
+                    f"Which time would you like to book?"
+                ),
+                data={
+                    "schedules": next_available_results,
+                    "total_open_slots": len(next_open_slots),
+                    "suggested_date": next_date_str,
+                    "suggested_doctor": next_doc_name,
+                },
+            )
+
         return ActionResult(
             success=True,
-            message=f"No open slots remaining for {canonical_query} on {iso_date}.",
+            message=f"No open slots remaining for {canonical_query} on {iso_date}. Would you like to check our General Practice doctors?",
             data={"schedules": results, "available_slots": []},
         )
 

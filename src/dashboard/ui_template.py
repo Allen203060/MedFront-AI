@@ -2640,6 +2640,7 @@ def render_dashboard_html() -> str:
 
         function endConsoleVoiceCall() {
             isVoiceCallActive = false;
+            stopConsoleAiPlayback();
             if (consoleAudioWs) {
                 try { consoleAudioWs.close(); } catch(e) {}
                 consoleAudioWs = null;
@@ -2721,11 +2722,31 @@ def render_dashboard_html() -> str:
             } catch(e) {}
         }
 
+        let currentConsoleSourceNode = null;
+
+        function stopConsoleAiPlayback() {
+            if (currentConsoleSourceNode) {
+                try {
+                    currentConsoleSourceNode.stop();
+                    currentConsoleSourceNode.disconnect();
+                } catch(e) {}
+                currentConsoleSourceNode = null;
+            }
+        }
+
         function handleVoiceConsoleEvent(msg) {
             const feed = document.getElementById('voiceTranscriptFeed');
             const msgType = msg.type || msg.event;
 
+            // 1. Instant Barge-In / Interrupt from server
+            if (msgType === 'interrupt') {
+                stopConsoleAiPlayback();
+                return;
+            }
+
+            // 2. Real-time User Interim Speech (Client-side immediate cutoff of AI playback)
             if (msgType === 'interim') {
+                stopConsoleAiPlayback();
                 let interim = document.getElementById('consoleInterimDraft');
                 if (!interim) {
                     interim = document.createElement('div');
@@ -2741,7 +2762,9 @@ def render_dashboard_html() -> str:
                 return;
             }
 
+            // 3. Finalized User Speech Turn
             if (msgType === 'user' || msgType === 'speech_recognized' || msgType === 'final') {
+                stopConsoleAiPlayback();
                 const interim = document.getElementById('consoleInterimDraft');
                 if (interim) interim.remove();
                 if (!msg.text || !msg.text.trim()) return;
@@ -2766,7 +2789,7 @@ def render_dashboard_html() -> str:
                 feed.appendChild(el);
                 feed.scrollTop = feed.scrollHeight;
 
-                const audioData = msg.data || msg.audio_base64;
+                const audioData = msg.audio_base64;
                 if (audioData && consoleAudioCtx) {
                     playPcmAudioBase64(audioData);
                 }
@@ -2781,30 +2804,65 @@ def render_dashboard_html() -> str:
             }
         }
 
-        function playPcmAudioBase64(b64Data) {
+        async function playPcmAudioBase64(b64Data) {
             try {
+                // Instantly halt any previous audio source before starting new playback
+                stopConsoleAiPlayback();
+
+                if (!consoleAudioCtx) return;
+                if (consoleAudioCtx.state === 'suspended') {
+                    await consoleAudioCtx.resume();
+                }
+
+                if (consoleAudioWs && consoleAudioWs.readyState === WebSocket.OPEN) {
+                    try { consoleAudioWs.send(JSON.stringify({ type: "playback_start" })); } catch(e) {}
+                }
+
                 const binaryStr = atob(b64Data);
                 const bytes = new Uint8Array(binaryStr.length);
                 for (let i = 0; i < binaryStr.length; i++) {
                     bytes[i] = binaryStr.charCodeAt(i);
                 }
-                const int16 = new Int16Array(bytes.buffer);
-                const float32 = new Float32Array(int16.length);
-                for (let i = 0; i < int16.length; i++) {
-                    float32[i] = int16[i] / 32768.0;
+
+                let audioBuffer;
+                try {
+                    // Azure Speech SDK default Riff16Khz16BitMonoPcm format is standard RIFF WAV
+                    audioBuffer = await consoleAudioCtx.decodeAudioData(bytes.buffer.slice(0));
+                } catch(decodeErr) {
+                    // Resilient fallback for raw headerless PCM16
+                    const int16 = new Int16Array(bytes.buffer);
+                    const float32 = new Float32Array(int16.length);
+                    for (let i = 0; i < int16.length; i++) {
+                        float32[i] = int16[i] / 32768.0;
+                    }
+                    audioBuffer = consoleAudioCtx.createBuffer(1, float32.length, 16000);
+                    audioBuffer.getChannelData(0).set(float32);
                 }
-                const audioBuffer = consoleAudioCtx.createBuffer(1, float32.length, 16000);
-                audioBuffer.getChannelData(0).set(float32);
+
                 const source = consoleAudioCtx.createBufferSource();
                 source.buffer = audioBuffer;
                 source.connect(consoleAudioCtx.destination);
-                source.start();
+                currentConsoleSourceNode = source;
+
+                source.onended = () => {
+                    if (currentConsoleSourceNode === source) {
+                        currentConsoleSourceNode = null;
+                        setTimeout(() => {
+                            if (consoleAudioWs && consoleAudioWs.readyState === WebSocket.OPEN) {
+                                try { consoleAudioWs.send(JSON.stringify({ type: "playback_end" })); } catch(e) {}
+                            }
+                        }, 100);
+                    }
+                };
+
+                source.start(0);
             } catch(e) {
                 console.warn("Audio playback error:", e);
             }
         }
 
         function simulateSpokenPrompt(text) {
+            stopConsoleAiPlayback();
             if (!isVoiceCallActive) {
                 alert("Please click 'Start Voice Call' first to establish the live voice connection with Aura.");
                 return;
