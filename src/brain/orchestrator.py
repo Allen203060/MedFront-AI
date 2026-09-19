@@ -211,14 +211,19 @@ class AgenticBrainOrchestrator:
         """Returns mandatory language enforcement instruction for the LLM prompt."""
         if self.memory.language == "Hindi":
             return (
-                "\n[MANDATORY LANGUAGE]: The active conversation language is HINDI. "
-                "You MUST reply in fluent, natural Hindi using Devanagari script (e.g. 'डॉक्टर अनन्या राव कल सुबह 9:00 बजे उपलब्ध हैं...'). "
+                "\n[MANDATORY LANGUAGE & GENDER DIRECTIVE]: The active conversation language is HINDI. "
+                "You MUST reply in fluent, natural Hindi using Devanagari script (e.g. 'डॉक्टर विक्रम सेन कल उपलब्ध हैं...'). "
+                "CRITICAL GRAMMAR RULE: Aura is FEMALE. You MUST ALWAYS speak using FEMALE first-person grammatical inflections "
+                "(स्त्रीलिंग क्रिया रूप). Use 'देखती हूँ', 'करती हूँ', 'बताती हूँ', 'मदद कर सकती हूँ', 'बुक कर देती हूँ'. "
+                "NEVER use masculine forms like 'देखता हूँ', 'करता हूँ', 'बताता हूँ', 'सकता हूँ'. "
                 "Do NOT reply in English."
             )
         if self.memory.language == "Punjabi":
             return (
-                "\n[MANDATORY LANGUAGE]: The active conversation language is PUNJABI. "
-                "You MUST reply in fluent, natural Punjabi using Gurmukhi script (e.g. 'ਡਾਕਟਰ ਅਨੰਨਿਆ ਰਾਓ ਕੱਲ੍ਹ ਸਵੇਰੇ 9:00 ਵਜੇ ਉਪਲਬਧ ਹਨ...'). "
+                "\n[MANDATORY LANGUAGE & GENDER DIRECTIVE]: The active conversation language is PUNJABI. "
+                "You MUST reply in fluent, natural Punjabi using Gurmukhi script. "
+                "CRITICAL GRAMMAR RULE: Aura is FEMALE. You MUST speak using FEMALE first-person grammatical inflections "
+                "(ਇਸਤਰੀ ਲਿੰਗ: 'ਮੈਂ ਵੇਖਦੀ ਹਾਂ', 'ਮੈਂ ਕਰਦੀ ਹਾਂ', 'ਮੈਂ ਮਦਦ ਕਰ ਸਕਦੀ ਹਾਂ'). "
                 "Do NOT reply in English."
             )
         return "\n[MANDATORY LANGUAGE]: Reply in clear, professional English."
@@ -340,6 +345,13 @@ class AgenticBrainOrchestrator:
             pid = tool_res.output_data.get("patient_id")
             if pid:
                 self.memory.update_session(patient_id=pid)
+
+            if tool_name == ToolName.CHECK_AVAILABILITY:
+                scheds = tool_res.output_data.get("schedules", [])
+                sug_doc = tool_res.output_data.get("suggested_doctor") or (scheds[0].get("doctor_name") if scheds else None)
+                sug_date = tool_res.output_data.get("suggested_date") or (scheds[0].get("date") if scheds else None)
+                if sug_doc or sug_date:
+                    self.memory.update_session(pending_doctor=sug_doc, pending_date=sug_date)
 
         if not tool_res.success:
             user_prompt = (

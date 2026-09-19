@@ -264,11 +264,14 @@ class MockDatabaseService(DatabaseService):
         for p in patients_data:
             self._patients[p.id] = p
 
-        # 2. Seed Clinicians & Dynamic Schedules (Today + next 14 days)
-        standard_slots = ["09:00 AM", "10:00 AM", "11:30 AM", "02:00 PM", "03:30 PM", "04:30 PM"]
+        # 2. Seed Clinicians & Dynamic Schedules spanning 09:00 AM to 09:00 PM (Today + next 30 days)
+        standard_slots = [
+            "09:00 AM", "10:00 AM", "11:30 AM", "01:00 PM",
+            "02:30 PM", "04:00 PM", "05:30 PM", "07:00 PM", "08:30 PM"
+        ]
         today = date.today()
 
-        for offset in range(15):
+        for offset in range(30):
             curr_date = (today + timedelta(days=offset)).strftime("%Y-%m-%d")
             for doc in self._doctors:
                 slots = [TimeSlot(slot_time=s, is_booked=False) for s in standard_slots]
@@ -800,101 +803,106 @@ class CosmosDatabaseService(DatabaseService):
                 for p in patients_data:
                     self.patients_container.upsert_item(body=p.model_dump())
 
-                standard_slots = ["09:00 AM", "10:00 AM", "11:30 AM", "02:00 PM", "03:30 PM", "04:30 PM"]
-                today = date.today()
+            # Ensure all clinic doctors have schedules from 9 AM to 9 PM for today and future 30 days
+            standard_slots = [
+                "09:00 AM", "10:00 AM", "11:30 AM", "01:00 PM",
+                "02:30 PM", "04:00 PM", "05:30 PM", "07:00 PM", "08:30 PM"
+            ]
+            today = date.today()
 
-                for offset in range(15):
-                    curr_date = (today + timedelta(days=offset)).strftime("%Y-%m-%d")
-                    for doc in DEFAULT_CLINIC_DOCTORS:
-                        slots = [TimeSlot(slot_time=s, is_booked=False) for s in standard_slots]
-                        sched = DoctorSchedule(
-                            doctor_id=doc["id"],
-                            doctor_name=doc["name"],
-                            specialty=doc["specialty"],
-                            date=curr_date,
-                            slots=slots
-                        )
-                        doc_body = sched.model_dump()
-                        doc_body["id"] = f"{doc['id']}_{curr_date}"
-                        self.schedules_container.upsert_item(body=doc_body)
+            for offset in range(30):
+                curr_date = (today + timedelta(days=offset)).strftime("%Y-%m-%d")
+                for doc in DEFAULT_CLINIC_DOCTORS:
+                    sched_id = f"{doc['id']}_{curr_date}"
+                    slots = [TimeSlot(slot_time=s, is_booked=False) for s in standard_slots]
+                    sched = DoctorSchedule(
+                        doctor_id=doc["id"],
+                        doctor_name=doc["name"],
+                        specialty=doc["specialty"],
+                        date=curr_date,
+                        slots=slots
+                    )
+                    doc_body = sched.model_dump()
+                    doc_body["id"] = sched_id
+                    self.schedules_container.upsert_item(body=doc_body)
 
-                # Seed default confirmed appointments if container is empty
-                appt_check = list(self.appointments_container.query_items(
-                    query="SELECT TOP 1 * FROM c", enable_cross_partition_query=True
-                ))
-                if not appt_check:
-                    today_str = str(today)
-                    tmrw_str = (today + timedelta(days=1)).strftime("%Y-%m-%d")
-                    default_appts = [
-                        Appointment(
-                            id="APT-C101",
-                            patient_id="P-10023",
-                            doctor_id="DOC-01",
-                            doctor_name="Dr. Ananya Rao",
-                            specialty="Cardiology",
-                            appointment_date=today_str,
-                            appointment_time="09:00 AM",
-                            reason_for_visit="Hypertension 6-month checkup & BP review",
-                            status="CONFIRMED",
-                        ),
-                        Appointment(
-                            id="APT-C102",
-                            patient_id="P-10025",
-                            doctor_id="DOC-01",
-                            doctor_name="Dr. Ananya Rao",
-                            specialty="Cardiology",
-                            appointment_date=today_str,
-                            appointment_time="11:30 AM",
-                            reason_for_visit="Post-coronary stent routine followup",
-                            status="CONFIRMED",
-                        ),
-                        Appointment(
-                            id="APT-G201",
-                            patient_id="P-10024",
-                            doctor_id="DOC-02",
-                            doctor_name="Dr. Rajesh Iyer",
-                            specialty="General Practice",
-                            appointment_date=today_str,
-                            appointment_time="10:00 AM",
-                            reason_for_visit="Seasonal allergic rhinitis & throat irritation",
-                            status="CONFIRMED",
-                        ),
-                        Appointment(
-                            id="APT-D301",
-                            patient_id="P-10026",
-                            doctor_id="DOC-03",
-                            doctor_name="Dr. Sunita Kapoor",
-                            specialty="Dermatology",
-                            appointment_date=today_str,
-                            appointment_time="09:00 AM",
-                            reason_for_visit="Eczema flare-up & contact dermatitis",
-                            status="CONFIRMED",
-                        ),
-                        Appointment(
-                            id="APT-O401",
-                            patient_id="P-10027",
-                            doctor_id="DOC-04",
-                            doctor_name="Dr. Vikram Sen",
-                            specialty="Orthopedics",
-                            appointment_date=today_str,
-                            appointment_time="10:00 AM",
-                            reason_for_visit="Right knee ligament strain evaluation",
-                            status="CONFIRMED",
-                        ),
-                        Appointment(
-                            id="APT-P501",
-                            patient_id="P-10028",
-                            doctor_id="DOC-05",
-                            doctor_name="Dr. Meera Nambiar",
-                            specialty="Pediatrics",
-                            appointment_date=today_str,
-                            appointment_time="11:30 AM",
-                            reason_for_visit="Routine pediatric growth & immunizations",
-                            status="CONFIRMED",
-                        ),
-                    ]
-                    for a in default_appts:
-                        self.appointments_container.upsert_item(body=a.model_dump())
+            # Seed default confirmed appointments if container is empty
+            appt_check = list(self.appointments_container.query_items(
+                query="SELECT TOP 1 * FROM c", enable_cross_partition_query=True
+            ))
+            if not appt_check:
+                today_str = str(today)
+                tmrw_str = (today + timedelta(days=1)).strftime("%Y-%m-%d")
+                default_appts = [
+                    Appointment(
+                        id="APT-C101",
+                        patient_id="P-10023",
+                        doctor_id="DOC-01",
+                        doctor_name="Dr. Ananya Rao",
+                        specialty="Cardiology",
+                        appointment_date=today_str,
+                        appointment_time="09:00 AM",
+                        reason_for_visit="Hypertension 6-month checkup & BP review",
+                        status="CONFIRMED",
+                    ),
+                    Appointment(
+                        id="APT-C102",
+                        patient_id="P-10025",
+                        doctor_id="DOC-01",
+                        doctor_name="Dr. Ananya Rao",
+                        specialty="Cardiology",
+                        appointment_date=today_str,
+                        appointment_time="11:30 AM",
+                        reason_for_visit="Post-coronary stent routine followup",
+                        status="CONFIRMED",
+                    ),
+                    Appointment(
+                        id="APT-G201",
+                        patient_id="P-10024",
+                        doctor_id="DOC-02",
+                        doctor_name="Dr. Rajesh Iyer",
+                        specialty="General Practice",
+                        appointment_date=today_str,
+                        appointment_time="10:00 AM",
+                        reason_for_visit="Seasonal allergic rhinitis & throat irritation",
+                        status="CONFIRMED",
+                    ),
+                    Appointment(
+                        id="APT-D301",
+                        patient_id="P-10026",
+                        doctor_id="DOC-03",
+                        doctor_name="Dr. Sunita Kapoor",
+                        specialty="Dermatology",
+                        appointment_date=today_str,
+                        appointment_time="09:00 AM",
+                        reason_for_visit="Eczema flare-up & contact dermatitis",
+                        status="CONFIRMED",
+                    ),
+                    Appointment(
+                        id="APT-O401",
+                        patient_id="P-10027",
+                        doctor_id="DOC-04",
+                        doctor_name="Dr. Vikram Sen",
+                        specialty="Orthopedics",
+                        appointment_date=today_str,
+                        appointment_time="10:00 AM",
+                        reason_for_visit="Right knee ligament strain evaluation",
+                        status="CONFIRMED",
+                    ),
+                    Appointment(
+                        id="APT-P501",
+                        patient_id="P-10028",
+                        doctor_id="DOC-05",
+                        doctor_name="Dr. Meera Nambiar",
+                        specialty="Pediatrics",
+                        appointment_date=today_str,
+                        appointment_time="11:30 AM",
+                        reason_for_visit="Routine pediatric growth & immunizations",
+                        status="CONFIRMED",
+                    ),
+                ]
+                for a in default_appts:
+                    self.appointments_container.upsert_item(body=a.model_dump())
 
                 logger.info("Successfully seeded Cosmos DB containers.")
         except Exception as e:
