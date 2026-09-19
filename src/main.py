@@ -32,6 +32,12 @@ async def root():
     return RedirectResponse(url="/dashboard")
 
 
+@app.get("/web-caller", include_in_schema=False)
+async def web_caller_redirect():
+    """Redirect /web-caller to Module 1 WebRTC / Web Audio Calling Interface."""
+    return RedirectResponse(url="/api/telephony/web-caller")
+
+
 @app.get("/health", tags=["Health"])
 async def health_check():
     """Health check endpoint to verify backend status."""

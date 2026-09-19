@@ -5,7 +5,9 @@ for an end-to-end full-duplex clinical voice receptionist with real-time barge-i
 """
 import asyncio
 import base64
+import json
 import logging
+import re
 import time
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -47,7 +49,7 @@ except Exception as e:
 
 
 @router.get("/static/bundle.js", summary="Serve local Calling SDK bundle")
-async def get_calling_bundle() -> FileResponse:
+async def get_calling_bundle() -> Response:
     """Serves the locally bundled Azure Calling SDK."""
     bundle_path = STATIC_DIR / "bundle.js"
     if not bundle_path.exists():
@@ -329,7 +331,7 @@ async def audio_stream_websocket(websocket: WebSocket) -> None:
 
         # 3. Push verified User transcript to browser UI
         asyncio.run_coroutine_threadsafe(
-            websocket.send_json({"type": "final", "text": clean_text}),
+            websocket.send_json({"type": "final", "event": "user", "text": clean_text}),
             loop,
         )
 
@@ -367,16 +369,16 @@ async def audio_stream_websocket(websocket: WebSocket) -> None:
                 tts_duration = (time.perf_counter() - tts_start) * 1000.0
                 logger.info(f"[TTS Synthesized in {tts_duration:.0f}ms]: {len(audio_bytes)} bytes")
 
-                # Schedule auto-reset of playing flag after audio playback finishes
-                reply_duration = max(1.0, len(audio_bytes) / 32000.0)
-                asyncio.create_task(_auto_clear_playback(reply_duration))
-
                 # A. Send DIRECT audio to browser over WebSocket (Zero-latency instant playback)
                 b64_audio = base64.b64encode(audio_bytes).decode("utf-8")
                 asyncio.run_coroutine_threadsafe(
                     websocket.send_json({"type": "audio", "data": b64_audio}),
                     loop,
                 )
+
+                # Schedule auto-reset of playing flag after audio playback finishes
+                reply_duration = max(1.0, len(audio_bytes) / 32000.0)
+                asyncio.run_coroutine_threadsafe(_auto_clear_playback(reply_duration), loop)
 
                 # B. Only trigger ACS play_audio for external telephony calls (when no direct WebSocket exists)
                 call_id = active_call_state.get("call_connection_id")
@@ -391,11 +393,11 @@ async def audio_stream_websocket(websocket: WebSocket) -> None:
                 logger.error(f"Failed to play brain response: {e}")
                 active_call_state["is_playing_audio"] = False
 
-    # Initialize continuous STT engine with calibrated 700ms silence timeout (was 1200ms)
+    # Initialize continuous STT engine with calibrated 450ms silence timeout for low-latency conversational cadence
     stt_engine = SpeechToTextEngine(
         on_interim_result=on_interim,
         on_final_result=on_final,
-        end_silence_timeout_ms=700,
+        end_silence_timeout_ms=450,
     )
     stt_engine.start_recognition()
 
@@ -404,6 +406,9 @@ async def audio_stream_websocket(websocket: WebSocket) -> None:
     try:
         while True:
             message = await websocket.receive()
+            if message.get("type") == "websocket.disconnect":
+                logger.info("Browser audio WebSocket received disconnect signal.")
+                break
             if "bytes" in message and message["bytes"]:
                 chunk_counter += 1
                 total_audio_bytes += len(message["bytes"])
@@ -413,14 +418,18 @@ async def audio_stream_websocket(websocket: WebSocket) -> None:
             elif "text" in message and message["text"]:
                 try:
                     data = json.loads(message["text"])
-                    msg_type = data.get("type")
+                    msg_type = data.get("type") or data.get("event")
                     if msg_type == "playback_start":
                         active_call_state["is_playing_audio"] = True
                     elif msg_type == "playback_end":
                         active_call_state["is_playing_audio"] = False
                         active_call_state["last_playback_end_time"] = time.time()
-                except Exception:
-                    pass
+                    elif msg_type in ["simulated_speech", "text_input"] and data.get("text"):
+                        prompt_text = data.get("text")
+                        logger.info(f"[WS Text Input]: Processing spoken prompt: '{prompt_text}'")
+                        on_final(prompt_text)
+                except Exception as ex:
+                    logger.warning(f"Error handling WS text message: {ex}")
     except WebSocketDisconnect:
         logger.info("Browser audio WebSocket disconnected.")
     except Exception as e:
@@ -433,552 +442,813 @@ async def audio_stream_websocket(websocket: WebSocket) -> None:
 
 @router.get("/web-caller", response_class=HTMLResponse, summary="Browser VoIP Web Calling Test Page")
 async def get_web_caller_page() -> str:
-    """Interactive WebRTC browser calling test client with real-time agentic transcript."""
-    return """
-    <!DOCTYPE html>
-    <html lang="en">
-    <head>
-        <meta charset="UTF-8">
-        <meta name="viewport" content="width=device-width, initial-scale=1.0">
-        <title>MedFront AI Voice Receptionist (Aura)</title>
-        <script defer src="/api/telephony/static/bundle.js"></script>
-        <style>
-            body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #0f172a; color: #f8fafc; display: flex; justify-content: center; align-items: center; min-height: 100vh; margin: 0; padding: 1rem; box-sizing: border-box; }
-            .card { background: #1e293b; padding: 2rem; border-radius: 16px; box-shadow: 0 10px 30px rgba(0,0,0,0.5); width: 520px; max-width: 100%; border: 1px solid #334155; }
-            h2 { margin-top: 0; color: #38bdf8; font-size: 1.5rem; text-align: center; }
-            p.subtitle { color: #94a3b8; font-size: 0.85rem; text-align: center; margin-top: -0.5rem; margin-bottom: 1.2rem; }
-            .status { margin: 0.8rem 0; padding: 0.8rem; border-radius: 8px; font-size: 0.85rem; background: #0f172a; border: 1px solid #334155; color: #cbd5e1; word-break: break-word; text-align: center; }
-            .badge-live { display: inline-block; background: #ef4444; color: white; padding: 2px 8px; border-radius: 12px; font-size: 0.75rem; font-weight: bold; animation: pulse 1.5s infinite; }
-            @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.4; } }
-            
-            .mic-select-box { margin-bottom: 1rem; text-align: left; }
-            .mic-select-box label { font-size: 0.8rem; color: #94a3b8; display: block; margin-bottom: 0.3rem; }
-            select { width: 100%; padding: 0.6rem; background: #0f172a; border: 1px solid #334155; color: #f8fafc; border-radius: 6px; font-size: 0.85rem; }
+    """Interactive WebRTC browser calling test client with real-time agentic transcript and theme synchronization."""
+    return """<!DOCTYPE html>
+<html lang="en" data-theme="light">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Aura Voice AI Studio | MedFront Healthcare</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@500;600;700;800&family=Plus+Jakarta+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+    <script defer src="/api/telephony/static/bundle.js"></script>
+    <style>
+        :root {
+            --bg-base: #f8fafc;
+            --bg-surface: #ffffff;
+            --bg-card: #ffffff;
+            --bg-card-subtle: #f1f5f9;
+            --border-subtle: #e2e8f0;
+            --border-strong: #cbd5e1;
+            --border-glow: rgba(13, 148, 136, 0.35);
+            --text-main: #0f172a;
+            --text-muted: #64748b;
+            --teal-500: #0d9488;
+            --teal-600: #0f766e;
+            --teal-50: #f0fdfa;
+            --teal-100: #ccfbf1;
+            --shadow-elevated: 0 12px 32px -4px rgba(15, 23, 42, 0.08), 0 4px 12px -2px rgba(15, 23, 42, 0.04);
+            --bubble-user-bg: #f0fdfa;
+            --bubble-user-border: #0d9488;
+            --bubble-user-text: #0f766e;
+            --bubble-agent-bg: #ffffff;
+            --bubble-agent-border: #e2e8f0;
+            --bubble-agent-text: #1e293b;
+        }
 
-            .console-title { font-size: 0.8rem; font-weight: 600; text-transform: uppercase; color: #64748b; margin-top: 0.8rem; margin-bottom: 0.4rem; display: flex; justify-content: space-between; align-items: center; }
-            .transcript-box { background: #0b1329; border: 1px solid #1e293b; border-radius: 8px; height: 230px; overflow-y: auto; padding: 0.8rem; font-size: 0.9rem; display: flex; flex-direction: column; gap: 0.6rem; }
-            .transcript-entry { padding: 0.5rem 0.7rem; border-radius: 8px; line-height: 1.4; }
-            .entry-user { background: #1e293b; color: #38bdf8; border-left: 3px solid #38bdf8; }
-            .entry-assistant { background: #16243b; color: #e2e8f0; border-left: 3px solid #10b981; }
-            .entry-interim { color: #94a3b8; font-style: italic; }
-            .tag { display: inline-block; font-size: 0.7rem; padding: 2px 6px; border-radius: 4px; background: #0284c7; color: white; margin-left: 6px; font-weight: 600; text-transform: uppercase; }
-            .tag-tool { background: #7c3aed; }
-            
-            button { width: 100%; padding: 0.85rem; font-size: 0.95rem; font-weight: 600; border-radius: 8px; border: none; cursor: pointer; transition: all 0.2s; margin-top: 0.5rem; }
-            .btn-direct { background: linear-gradient(135deg, #10b981 0%, #059669 100%); color: white; box-shadow: 0 4px 14px rgba(16, 185, 129, 0.35); font-size: 1.05rem; }
-            .btn-direct:hover { background: linear-gradient(135deg, #059669 0%, #047857 100%); }
-            .btn-init { background: #3b82f6; color: white; font-size: 0.85rem; padding: 0.6rem; }
-            .btn-init:hover { background: #2563eb; }
-            .btn-call { background: #10b981; color: white; display: none; font-size: 0.85rem; padding: 0.6rem; }
-            .btn-call:hover { background: #059669; }
-            .btn-hangup { background: #ef4444; color: white; display: none; }
-            .btn-hangup:hover { background: #dc2626; }
-            .webrtc-details { margin-top: 1rem; border: 1px dashed #334155; border-radius: 8px; padding: 0.6rem 0.8rem; font-size: 0.8rem; color: #94a3b8; }
-            .webrtc-details summary { cursor: pointer; font-weight: 600; color: #38bdf8; outline: none; }
-            button:disabled { background: #475569; cursor: not-allowed; }
-        </style>
-    </head>
-    <body>
-        <div class="card">
-            <h2>MedFront AI Voice Receptionist</h2>
-            <p class="subtitle">Tri-Module Live Voice Loop: Telephony + Speech + Azure OpenAI</p>
-            
-            <div class="mic-select-box">
-                <label for="micSelect">🎤 Select Microphone Hardware:</label>
-                <select id="micSelect"></select>
+        [data-theme="dark"] {
+            --bg-base: #090d16;
+            --bg-surface: #0f172a;
+            --bg-card: #131d31;
+            --bg-card-subtle: #1a263d;
+            --border-subtle: #1e293b;
+            --border-strong: #334155;
+            --border-glow: rgba(20, 184, 166, 0.45);
+            --text-main: #f8fafc;
+            --text-muted: #94a3b8;
+            --teal-500: #14b8a6;
+            --teal-600: #0d9488;
+            --teal-50: rgba(13, 148, 136, 0.15);
+            --teal-100: rgba(13, 148, 136, 0.25);
+            --shadow-elevated: 0 16px 40px rgba(0, 0, 0, 0.6);
+            --bubble-user-bg: #132738;
+            --bubble-user-border: #0284c7;
+            --bubble-user-text: #38bdf8;
+            --bubble-agent-bg: #16243b;
+            --bubble-agent-border: #243552;
+            --bubble-agent-text: #e2e8f0;
+        }
+
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        body {
+            font-family: 'Plus Jakarta Sans', -apple-system, BlinkMacSystemFont, sans-serif;
+            background: var(--bg-base);
+            color: var(--text-main);
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            min-height: 100vh;
+            padding: 1.5rem 1rem;
+            transition: background 0.3s ease, color 0.3s ease;
+        }
+
+        .studio-card {
+            background: var(--bg-card);
+            border: 1px solid var(--border-subtle);
+            border-radius: 20px;
+            box-shadow: var(--shadow-elevated);
+            width: 580px;
+            max-width: 100%;
+            padding: 2rem;
+            display: flex;
+            flex-direction: column;
+            gap: 1.25rem;
+            transition: all 0.3s ease;
+        }
+
+        .card-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            border-bottom: 1px solid var(--border-subtle);
+            padding-bottom: 1rem;
+        }
+
+        .brand-title {
+            font-family: 'Outfit', sans-serif;
+            font-size: 1.35rem;
+            font-weight: 800;
+            color: var(--text-main);
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+        }
+
+        .btn-theme-toggle {
+            background: var(--bg-card-subtle);
+            border: 1px solid var(--border-strong);
+            color: var(--text-main);
+            border-radius: 9999px;
+            padding: 0.35rem 0.85rem;
+            font-size: 0.8rem;
+            font-weight: 600;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            gap: 0.4rem;
+            transition: all 0.2s;
+        }
+        .btn-theme-toggle:hover {
+            border-color: var(--teal-500);
+        }
+
+        .mic-box {
+            display: flex;
+            flex-direction: column;
+            gap: 0.4rem;
+        }
+        .mic-box label {
+            font-size: 0.8rem;
+            font-weight: 600;
+            color: var(--text-muted);
+        }
+        select {
+            width: 100%;
+            padding: 0.65rem 0.85rem;
+            background: var(--bg-surface);
+            border: 1px solid var(--border-strong);
+            color: var(--text-main);
+            border-radius: 10px;
+            font-size: 0.85rem;
+            outline: none;
+            font-family: inherit;
+        }
+        select:focus { border-color: var(--teal-500); }
+
+        .call-status-bar {
+            background: var(--bg-card-subtle);
+            border: 1px solid var(--border-subtle);
+            border-radius: 12px;
+            padding: 0.75rem 1rem;
+            text-align: center;
+            font-size: 0.85rem;
+            font-weight: 600;
+            color: var(--text-muted);
+            word-break: break-word;
+        }
+
+        .waveform-container {
+            background: var(--bg-surface);
+            border: 1px solid var(--border-subtle);
+            border-radius: 12px;
+            padding: 0.6rem;
+            text-align: center;
+        }
+        canvas { width: 100%; height: 50px; }
+
+        .console-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            font-size: 0.8rem;
+            font-weight: 700;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+            color: var(--text-muted);
+        }
+
+        .badge-live {
+            background: #ef4444;
+            color: white;
+            padding: 2px 8px;
+            border-radius: 12px;
+            font-size: 0.72rem;
+            font-weight: 700;
+            animation: pulse 1.5s infinite;
+        }
+        @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.4; } }
+
+        .transcript-box {
+            background: var(--bg-card-subtle);
+            border: 1px solid var(--border-subtle);
+            border-radius: 14px;
+            height: 240px;
+            overflow-y: auto;
+            padding: 1rem;
+            display: flex;
+            flex-direction: column;
+            gap: 0.75rem;
+            scroll-behavior: smooth;
+        }
+
+        .bubble-msg {
+            padding: 0.75rem 1rem;
+            border-radius: 12px;
+            font-size: 0.88rem;
+            line-height: 1.45;
+            max-width: 90%;
+            word-break: break-word;
+            animation: fadeIn 0.25s ease forwards;
+        }
+        @keyframes fadeIn { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: translateY(0); } }
+
+        .bubble-user {
+            background: var(--bubble-user-bg);
+            border: 1px solid var(--bubble-user-border);
+            color: var(--bubble-user-text);
+            align-self: flex-end;
+            border-bottom-right-radius: 2px;
+        }
+
+        .bubble-assistant {
+            background: var(--bubble-agent-bg);
+            border: 1px solid var(--bubble-agent-border);
+            color: var(--bubble-agent-text);
+            align-self: flex-start;
+            border-bottom-left-radius: 2px;
+            box-shadow: 0 2px 6px rgba(0,0,0,0.04);
+        }
+
+        .bubble-interim {
+            background: rgba(148, 163, 184, 0.15);
+            border: 1px dashed var(--border-strong);
+            color: var(--text-muted);
+            align-self: flex-end;
+            font-style: italic;
+        }
+
+        .tag-pill {
+            display: inline-block;
+            font-size: 0.7rem;
+            padding: 2px 6px;
+            border-radius: 6px;
+            background: var(--teal-50);
+            color: var(--teal-600);
+            font-weight: 700;
+            border: 1px solid rgba(13, 148, 136, 0.2);
+            margin-left: 4px;
+        }
+        .tag-tool {
+            background: #ede9fe;
+            color: #7c3aed;
+            border-color: rgba(124, 58, 237, 0.2);
+        }
+
+        button.btn-primary {
+            background: linear-gradient(135deg, #0d9488 0%, #0f766e 100%);
+            color: white;
+            border: none;
+            border-radius: 12px;
+            padding: 0.9rem;
+            font-size: 1rem;
+            font-weight: 700;
+            cursor: pointer;
+            box-shadow: 0 4px 14px rgba(13, 148, 136, 0.35);
+            transition: all 0.2s;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            gap: 0.5rem;
+            width: 100%;
+            font-family: inherit;
+        }
+        button.btn-primary:hover {
+            transform: translateY(-1px);
+            box-shadow: 0 6px 18px rgba(13, 148, 136, 0.45);
+        }
+
+        button.btn-danger {
+            background: linear-gradient(135deg, #ef4444 0%, #dc2626 100%);
+            color: white;
+            border: none;
+            border-radius: 12px;
+            padding: 0.9rem;
+            font-size: 1rem;
+            font-weight: 700;
+            cursor: pointer;
+            display: none;
+            width: 100%;
+            font-family: inherit;
+        }
+
+        .quick-prompts-bar {
+            display: flex;
+            flex-direction: column;
+            gap: 0.4rem;
+        }
+        .quick-prompts-bar span {
+            font-size: 0.72rem;
+            font-weight: 700;
+            text-transform: uppercase;
+            color: var(--text-muted);
+        }
+        .chip-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 0.4rem;
+        }
+        .prompt-chip {
+            background: var(--bg-card-subtle);
+            border: 1px solid var(--border-subtle);
+            border-radius: 8px;
+            padding: 0.45rem 0.6rem;
+            font-size: 0.75rem;
+            color: var(--text-main);
+            text-align: left;
+            cursor: pointer;
+            transition: all 0.15s;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            font-family: inherit;
+        }
+        .prompt-chip:hover {
+            border-color: var(--teal-500);
+            background: var(--teal-50);
+            color: var(--teal-600);
+        }
+
+        .link-dashboard {
+            display: block;
+            text-align: center;
+            font-size: 0.85rem;
+            color: var(--teal-600);
+            text-decoration: none;
+            padding: 0.65rem;
+            border: 1px solid var(--border-subtle);
+            border-radius: 10px;
+            background: var(--bg-card-subtle);
+            font-weight: 600;
+            transition: all 0.2s;
+        }
+        .link-dashboard:hover {
+            border-color: var(--teal-500);
+            background: var(--teal-50);
+        }
+    </style>
+</head>
+<body>
+    <div class="studio-card">
+        <div class="card-header">
+            <div>
+                <div class="brand-title">
+                    <span>🎙️ Aura Voice Receptionist</span>
+                    <span class="tag-pill" style="font-size: 0.68rem;">TRILINGUAL AI</span>
+                </div>
+                <div style="font-size: 0.78rem; color: var(--text-muted); margin-top: 2px;">
+                    Full-duplex Azure Speech STT &rarr; GPT-4o Intent &rarr; Neural TTS
+                </div>
             </div>
-
-            <div id="status" class="status">Click "Start Voice Call" to begin speaking with Aura</div>
-
-            <div class="console-title">
-                <span>Agentic Conversation Stream</span>
-                <span id="liveIndicator" style="display:none;" class="badge-live">MIC ACTIVE</span>
-            </div>
-            <div id="transcriptBox" class="transcript-box">
-                <div style="color: #475569; font-style: italic;">Turn history will appear here in real time as you speak...</div>
-            </div>
-
-            <button id="directCallBtn" class="btn-direct" onclick="startDirectVoiceCall()">🎙️ Start Voice Call (Instant)</button>
-            <button id="hangupBtn" class="btn-hangup" onclick="hangUp()">🔴 End Call</button>
-
-            <details class="webrtc-details">
-                <summary>📞 Advanced: ACS Carrier WebRTC Dialing</summary>
-                <p style="margin: 0.5rem 0; font-size: 0.75rem; color: #64748b;">Tests 2-leg Azure Communication Services Call Automation with WebRTC inbound client.</p>
-                <button id="initBtn" class="btn-init" onclick="initClient()">1. Initialize Web Client</button>
-                <button id="callBtn" class="btn-call" onclick="startCall()">2. Call Virtual Receptionist</button>
-            </details>
-
-            <a href="/dashboard" style="display:block; text-align:center; margin-top:1rem; font-size:0.85rem; color:#38bdf8; text-decoration:none; padding:0.65rem; border:1px solid rgba(56,189,248,0.3); border-radius:8px; background:rgba(56,189,248,0.08); font-weight:600; transition:all 0.2s;">
-                🏥 Open Hospital Dashboard & Patient Records
-            </a>
+            <button id="themeToggleBtn" class="btn-theme-toggle" onclick="toggleTheme()">
+                🌙 Dark Mode
+            </button>
         </div>
 
-        <script>
-            let callAgent = null;
-            let currentCall = null;
-            let myUserId = null;
-            let audioWs = null;
-            let audioContext = null;
-            let micStream = null;
-            let processorNode = null;
+        <div class="mic-box">
+            <label for="micSelect">🎤 Select Microphone Hardware:</label>
+            <select id="micSelect"></select>
+        </div>
 
-            const log = (msg) => document.getElementById('status').innerText = msg;
+        <div id="status" class="call-status-bar">
+            Click "Start Voice Call (Instant)" to begin speaking with Aura
+        </div>
 
-            async function populateMicrophones() {
-                try {
-                    const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-                    stream.getTracks().forEach(track => track.stop());
+        <!-- Waveform Visualizer -->
+        <div class="waveform-container">
+            <canvas id="waveformCanvas" width="500" height="50"></canvas>
+            <div style="font-size: 0.7rem; color: var(--text-muted); margin-top: 2px;">Microphone Voice Frequency Spectrum</div>
+        </div>
 
-                    const devices = await navigator.mediaDevices.enumerateDevices();
-                    const audioInputs = devices.filter(d => d.kind === 'audioinput');
-                    const select = document.getElementById('micSelect');
-                    select.innerHTML = '';
-                    audioInputs.forEach((dev, idx) => {
-                        const opt = document.createElement('option');
-                        opt.value = dev.deviceId;
-                        opt.text = dev.label || `Microphone ${idx + 1}`;
-                        if (!dev.label.toLowerCase().includes('monitor') && !dev.label.toLowerCase().includes('mix')) {
-                            opt.selected = true;
-                        }
-                        select.appendChild(opt);
-                    });
-                    log("Microphone ready. Click 'Start Voice Call (Instant)' to begin.");
-                } catch (e) {
-                    console.warn("Could not list audio devices:", e);
-                    if (e.name === 'NotAllowedError' || e.name === 'PermissionDeniedError') {
-                        log("⚠️ Mic permission blocked. Click the lock/mic icon in the browser address bar to allow.");
-                    } else {
-                        log("Microphone status: " + (e.message || "Ready"));
-                    }
-                }
+        <div class="console-header">
+            <span>Agentic Conversation Stream</span>
+            <span id="liveIndicator" style="display:none;" class="badge-live">MIC ACTIVE</span>
+        </div>
+
+        <div id="transcriptBox" class="transcript-box">
+            <div style="color: var(--text-muted); font-style: italic; text-align: center; margin-top: 4.5rem;">
+                Spoken conversation turns and live transcripts will appear here in real time...
+            </div>
+        </div>
+
+        <div class="quick-prompts-bar">
+            <span>Quick Test Prompts (Spoken Simulators):</span>
+            <div class="chip-grid">
+                <button class="prompt-chip" onclick="simulateSpokenPrompt('What are Dr. Ananya Rao open slots for cardiology tomorrow?')">
+                    💬 "Dr. Ananya cardiology slots tomorrow?"
+                </button>
+                <button class="prompt-chip" onclick="simulateSpokenPrompt('I am visiting for the first time, my name is Rahul Mehta, book me with Dr. Rajesh tomorrow at 10 AM')">
+                    💬 "Book as first-time new patient"
+                </button>
+                <button class="prompt-chip" onclick="simulateSpokenPrompt('नमस्ते, क्या मुझे कल डॉक्टर सुनीता कपूर के लिए अपॉइंटमेंट मिल सकता है?')">
+                    💬 "नमस्ते, डॉक्टर से मिलना है (Hindi)"
+                </button>
+                <button class="prompt-chip" onclick="simulateSpokenPrompt('Can I book an appointment with Dr. Vikram Sen?')">
+                    💬 "Switch back to English booking"
+                </button>
+            </div>
+        </div>
+
+        <button id="directCallBtn" class="btn-primary" onclick="startDirectVoiceCall()">
+            <span>🎙️ Start Voice Call (Instant)</span>
+        </button>
+        <button id="hangupBtn" class="btn-danger" onclick="hangUp()">
+            <span>🔴 End Voice Call</span>
+        </button>
+
+        <a href="/dashboard" class="link-dashboard">
+            🏥 Return to Hospital Administrative Dashboard
+        </a>
+    </div>
+
+    <script>
+        // Theme synchronization with main dashboard
+        function applyTheme(theme) {
+            document.documentElement.setAttribute('data-theme', theme);
+            localStorage.setItem('auracare_theme', theme);
+            const btn = document.getElementById('themeToggleBtn');
+            if (btn) {
+                btn.innerHTML = theme === 'dark' ? '☀️ Light Mode' : '🌙 Dark Mode';
             }
-            populateMicrophones();
+        }
+        function toggleTheme() {
+            const cur = document.documentElement.getAttribute('data-theme') || 'light';
+            applyTheme(cur === 'dark' ? 'light' : 'dark');
+        }
+        const savedTheme = localStorage.getItem('auracare_theme') || 'light';
+        applyTheme(savedTheme);
 
-            function downsampleTo16k(buffer, inputSampleRate) {
-                if (inputSampleRate === 16000) return buffer;
-                const ratio = inputSampleRate / 16000;
-                const newLength = Math.round(buffer.length / ratio);
-                const result = new Float32Array(newLength);
-                let offsetResult = 0;
-                let offsetBuffer = 0;
-                while (offsetResult < result.length) {
-                    const nextOffsetBuffer = Math.round((offsetResult + 1) * ratio);
-                    let accum = 0, count = 0;
-                    for (let i = offsetBuffer; i < nextOffsetBuffer && i < buffer.length; i++) {
-                        accum += buffer[i];
-                        count++;
+        let audioWs = null;
+        let audioContext = null;
+        let micStream = null;
+        let processorNode = null;
+        let analyserNode = null;
+        let isCallActive = false;
+
+        const log = (msg) => {
+            const el = document.getElementById('status');
+            if (el) el.innerText = msg;
+        };
+
+        async function populateMicrophones() {
+            try {
+                if (!navigator.mediaDevices || !navigator.mediaDevices.enumerateDevices) return;
+                const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+                stream.getTracks().forEach(track => track.stop());
+
+                const devices = await navigator.mediaDevices.enumerateDevices();
+                const audioInputs = devices.filter(d => d.kind === 'audioinput');
+                const select = document.getElementById('micSelect');
+                select.innerHTML = '';
+                audioInputs.forEach((dev, idx) => {
+                    const opt = document.createElement('option');
+                    opt.value = dev.deviceId;
+                    opt.text = dev.label || `Microphone ${idx + 1}`;
+                    if (!dev.label.toLowerCase().includes('monitor') && !dev.label.toLowerCase().includes('mix')) {
+                        opt.selected = true;
                     }
-                    result[offsetResult] = count > 0 ? accum / count : buffer[offsetBuffer];
-                    offsetResult++;
-                    offsetBuffer = nextOffsetBuffer;
-                }
-                return result;
-            }
-
-            async function startDirectVoiceCall() {
-                try {
-                    log("Connecting directly to Voice Receptionist pipeline...");
-                    const directBtn = document.getElementById('directCallBtn');
-                    directBtn.disabled = true;
-
-                    // Unified AudioContext initialization
-                    if (!audioContext) {
-                        const AudioCtx = window.AudioContext || window.webkitAudioContext;
-                        try {
-                            audioContext = new AudioCtx({ sampleRate: 16000 });
-                        } catch (e) {
-                            audioContext = new AudioCtx();
-                        }
-                    }
-                    playbackAudioCtx = audioContext;
-                    if (audioContext.state === 'suspended') {
-                        await audioContext.resume();
-                    }
-
-                    await startMicStreaming();
-                    directBtn.style.display = 'none';
-                    document.getElementById('hangupBtn').style.display = 'block';
-                    log("🟢 Call Active! Speak naturally into your microphone.");
-                } catch (err) {
-                    console.error("Direct call error:", err);
-                    log("Call Error: " + err.message);
-                    const directBtn = document.getElementById('directCallBtn');
-                    if (directBtn) {
-                        directBtn.disabled = false;
-                        directBtn.style.display = 'block';
-                    }
-                    document.getElementById('hangupBtn').style.display = 'none';
-                }
-            }
-
-            async function initClient() {
-                try {
-                    if (!window.CallClient) {
-                        log("Loading WebRTC bundle... please wait a moment.");
-                        await new Promise(r => setTimeout(r, 1500));
-                        if (!window.CallClient) throw new Error("WebRTC library bundle still loading. Please retry in 2 seconds.");
-                    }
-                    log("Fetching VoIP token from backend...");
-                    document.getElementById('initBtn').disabled = true;
-
-                    const res = await fetch('/api/telephony/token');
-                    const data = await res.json();
-                    if (!res.ok) throw new Error(data.error || "Failed to fetch token");
-
-                    myUserId = data.caller_user_id;
-                    log("Token acquired! Initializing WebRTC CallClient...");
-
-                    const callClient = new window.CallClient();
-                    const tokenCredential = new window.AzureCommunicationTokenCredential(data.token);
-
-                    callAgent = await callClient.createCallAgent(tokenCredential, { displayName: "Patient Caller" });
-                    
-                    callAgent.on('incomingCall', async (args) => {
-                        log("Incoming Call from Call Automation! Connecting...");
-                        const incomingCall = args.incomingCall;
-                        currentCall = await incomingCall.accept();
-                        muteWebRtcRemoteAudio();
-                        setInterval(muteWebRtcRemoteAudio, 1000);
-                        document.getElementById('callBtn').style.display = 'none';
-                        document.getElementById('directCallBtn').style.display = 'none';
-                        document.getElementById('hangupBtn').style.display = 'block';
-
-                        currentCall.on('stateChanged', () => {
-                            log("Call State: " + currentCall.state);
-                            if (currentCall.state === 'Connected') {
-                                startMicStreaming();
-                            } else if (currentCall.state === 'Disconnected') {
-                                hangUp();
-                            }
-                        });
-                    });
-
-                    log("Web Client Ready! Click '2. Call Virtual Receptionist'");
-                    document.getElementById('initBtn').style.display = 'none';
-                    document.getElementById('callBtn').style.display = 'block';
-                } catch (err) {
-                    log("Initialization Error: " + err.message);
-                    document.getElementById('initBtn').disabled = false;
-                }
-            }
-
-            async function startCall() {
-                try {
-                    log("Requesting Call Automation to call browser...");
-                    document.getElementById('callBtn').disabled = true;
-
-                    const res = await fetch('/api/telephony/call-browser', {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({ caller_user_id: myUserId })
-                    });
-                    const data = await res.json();
-                    if (!res.ok) throw new Error(data.error || "Failed to trigger call");
-
-                    log("Call Automation dialing your browser via WebRTC...");
-                } catch (err) {
-                    log("Call Error: " + err.message);
-                    document.getElementById('callBtn').disabled = false;
-                }
-            }
-
-            async function startMicStreaming() {
-                try {
-                    let stream = null;
-                    const selectEl = document.getElementById('micSelect');
-                    const selectedDeviceId = selectEl ? selectEl.value : null;
-                    
-                    try {
-                        const audioConstraints = {
-                            channelCount: 1,
-                            echoCancellation: true,
-                            noiseSuppression: true,
-                            autoGainControl: true,
-                        };
-                        if (selectedDeviceId && selectedDeviceId !== 'default' && selectedDeviceId !== '') {
-                            audioConstraints.deviceId = { ideal: selectedDeviceId };
-                        }
-                        stream = await navigator.mediaDevices.getUserMedia({ audio: audioConstraints });
-                    } catch (e1) {
-                        console.warn("Device-specific constraint failed, falling back to audio:true", e1);
-                        stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-                    }
-                    micStream = stream;
-
-                    const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-                    const wsUrl = `${protocol}//${window.location.host}/api/telephony/ws/audio-stream`;
-                    audioWs = new WebSocket(wsUrl);
-
-                    audioWs.onopen = () => {
-                        console.log("[WS] Audio stream connected.");
-                        const liveIndicator = document.getElementById('liveIndicator');
-                        if (liveIndicator) liveIndicator.style.display = 'inline-block';
-                    };
-
-                    audioWs.onerror = (err) => {
-                        console.error("[WS] Audio stream error:", err);
-                        log("⚠️ Voice stream connection error.");
-                    };
-
-                    audioWs.onclose = () => {
-                        console.log("[WS] Audio stream closed.");
-                        const liveIndicator = document.getElementById('liveIndicator');
-                        if (liveIndicator) liveIndicator.style.display = 'none';
-                    };
-
-                    audioWs.onmessage = (event) => {
-                        const msg = JSON.parse(event.data);
-                        handleSpeechEvent(msg);
-                    };
-
-                    if (!audioContext) {
-                        const AudioCtx = window.AudioContext || window.webkitAudioContext;
-                        try {
-                            audioContext = new AudioCtx({ sampleRate: 16000 });
-                        } catch (e) {
-                            audioContext = new AudioCtx();
-                        }
-                    }
-                    playbackAudioCtx = audioContext;
-                    if (audioContext.state === 'suspended') {
-                        await audioContext.resume();
-                    }
-                    const actualRate = audioContext.sampleRate;
-                    log(`Mic active (${actualRate}Hz -> 16000Hz). Listening...`);
-
-                    const source = audioContext.createMediaStreamSource(micStream);
-                    processorNode = audioContext.createScriptProcessor(4096, 1, 1);
-                    
-                    let packetCount = 0;
-                    const liveIndicator = document.getElementById('liveIndicator');
-                    processorNode.onaudioprocess = (e) => {
-                        if (!audioWs || audioWs.readyState !== WebSocket.OPEN) return;
-                        const rawFloatData = e.inputBuffer.getChannelData(0);
-
-                        // Visual energy indicator
-                        let sumSquares = 0;
-                        for (let i = 0; i < rawFloatData.length; i++) {
-                            sumSquares += rawFloatData[i] * rawFloatData[i];
-                        }
-                        const rms = Math.sqrt(sumSquares / rawFloatData.length);
-                        if (liveIndicator) {
-                            if (rms > 0.015) {
-                                liveIndicator.innerText = "TALKING 🗣️";
-                                liveIndicator.style.background = "#10b981";
-                            } else {
-                                liveIndicator.innerText = "MIC ACTIVE";
-                                liveIndicator.style.background = "#ef4444";
-                            }
-                        }
-
-                        const downsampled = downsampleTo16k(rawFloatData, actualRate);
-                        const pcmData = new Int16Array(downsampled.length);
-                        for (let i = 0; i < downsampled.length; i++) {
-                            const s = Math.max(-1, Math.min(1, downsampled[i]));
-                            pcmData[i] = s < 0 ? s * 0x8000 : s * 0x7FFF;
-                        }
-                        audioWs.send(pcmData.buffer);
-
-                        packetCount++;
-                        if (packetCount === 1) {
-                            log("🟢 Audio stream active! Say 'Hello' or 'Book an appointment'...");
-                        }
-                    };
-
-                    source.connect(processorNode);
-                    const muteGain = audioContext.createGain();
-                    muteGain.gain.value = 0;
-                    processorNode.connect(muteGain);
-                    muteGain.connect(audioContext.destination);
-
-                } catch (err) {
-                    console.error("Failed to start mic stream:", err);
-                    log("Microphone access error: " + err.message);
-                    throw err;
-                }
-            }
-
-            function stopMicStreaming() {
-                const liveIndicator = document.getElementById('liveIndicator');
-                if (liveIndicator) liveIndicator.style.display = 'none';
-
-                if (processorNode) {
-                    try { processorNode.disconnect(); } catch (e) {}
-                    processorNode = null;
-                }
-                if (audioContext) {
-                    try { audioContext.close(); } catch (e) {}
-                    audioContext = null;
-                    playbackAudioCtx = null;
-                }
-                if (micStream) {
-                    try {
-                        micStream.getTracks().forEach(track => track.stop());
-                    } catch (e) {}
-                    micStream = null;
-                }
-                if (audioWs) {
-                    try { audioWs.close(); } catch (e) {}
-                    audioWs = null;
-                }
-            }
-
-            let isAiSpeaking = false;
-            let currentSourceNode = null;
-            let playbackAudioCtx = null;
-
-            function stopAiPlayback() {
-                if (currentSourceNode) {
-                    try {
-                        currentSourceNode.stop();
-                        currentSourceNode.disconnect();
-                    } catch (e) {}
-                    currentSourceNode = null;
-                }
-                isAiSpeaking = false;
-            }
-
-            function muteWebRtcRemoteAudio() {
-                // Ensure WebRTC remote audio elements are muted so only direct WebSocket audio plays
-                document.querySelectorAll('audio').forEach(el => {
-                    el.muted = true;
+                    select.appendChild(opt);
                 });
+            } catch (e) {
+                console.warn("Could not list audio devices:", e);
             }
+        }
+        populateMicrophones();
 
-            async function playAudioBuffer(base64Data) {
-                try {
-                    stopAiPlayback(); // Interrupt any existing audio buffer immediately
-                    muteWebRtcRemoteAudio();
-                    if (!audioContext) {
-                        const AudioCtx = window.AudioContext || window.webkitAudioContext;
+        function downsampleTo16k(buffer, inputSampleRate) {
+            if (inputSampleRate === 16000) return buffer;
+            const ratio = inputSampleRate / 16000;
+            const newLength = Math.round(buffer.length / ratio);
+            const result = new Float32Array(newLength);
+            let offsetResult = 0;
+            let offsetBuffer = 0;
+            while (offsetResult < result.length) {
+                const nextOffsetBuffer = Math.round((offsetResult + 1) * ratio);
+                let accum = 0, count = 0;
+                for (let i = offsetBuffer; i < nextOffsetBuffer && i < buffer.length; i++) {
+                    accum += buffer[i];
+                    count++;
+                }
+                result[offsetResult] = count > 0 ? accum / count : buffer[offsetBuffer];
+                offsetResult++;
+                offsetBuffer = nextOffsetBuffer;
+            }
+            return result;
+        }
+
+        async function startDirectVoiceCall() {
+            try {
+                log("Connecting directly to Voice Receptionist pipeline...");
+                const directBtn = document.getElementById('directCallBtn');
+                directBtn.disabled = true;
+
+                if (!audioContext) {
+                    const AudioCtx = window.AudioContext || window.webkitAudioContext;
+                    try {
+                        audioContext = new AudioCtx({ sampleRate: 16000 });
+                    } catch (e) {
                         audioContext = new AudioCtx();
                     }
-                    playbackAudioCtx = audioContext;
-                    if (playbackAudioCtx.state === 'suspended') {
-                        await playbackAudioCtx.resume();
-                    }
-
-                    if (audioWs && audioWs.readyState === WebSocket.OPEN) {
-                        try { audioWs.send(JSON.stringify({ type: "playback_start" })); } catch(e) {}
-                    }
-
-                    const binaryString = window.atob(base64Data);
-                    const len = binaryString.length;
-                    const bytes = new Uint8Array(len);
-                    for (let i = 0; i < len; i++) {
-                        bytes[i] = binaryString.charCodeAt(i);
-                    }
-                    const audioBuffer = await playbackAudioCtx.decodeAudioData(bytes.buffer);
-                    const sourceNode = playbackAudioCtx.createBufferSource();
-                    sourceNode.buffer = audioBuffer;
-                    sourceNode.connect(playbackAudioCtx.destination);
-                    currentSourceNode = sourceNode;
-
-                    isAiSpeaking = true;
-                    sourceNode.onended = () => {
-                        if (currentSourceNode === sourceNode) {
-                            currentSourceNode = null;
-                            setTimeout(() => { 
-                                isAiSpeaking = false; 
-                                if (audioWs && audioWs.readyState === WebSocket.OPEN) {
-                                    try { audioWs.send(JSON.stringify({ type: "playback_end" })); } catch(e) {}
-                                }
-                            }, 100);
-                        }
-                    };
-                    sourceNode.start(0);
-                } catch (err) {
-                    console.warn("Direct audio playback warning:", err);
-                    isAiSpeaking = false;
                 }
-            }
-
-            function handleSpeechEvent(msg) {
-                const box = document.getElementById('transcriptBox');
-                let interimEl = document.getElementById('interimText');
-
-                if (msg.type === 'interrupt') {
-                    console.log("[BARGE-IN] Received interrupt command from server. Stopping audio.");
-                    stopAiPlayback();
-                    return;
+                if (audioContext.state === 'suspended') {
+                    await audioContext.resume();
                 }
 
-                if (msg.type === 'audio') {
-                    playAudioBuffer(msg.data);
-                    return;
-                }
-
-                if (msg.type === 'interim') {
-                    if (!interimEl) {
-                        interimEl = document.createElement('div');
-                        interimEl.id = 'interimText';
-                        interimEl.className = 'transcript-entry entry-interim';
-                        box.appendChild(interimEl);
-                    }
-                    interimEl.innerText = "🗣️ " + msg.text + "...";
-                    box.scrollTop = box.scrollHeight;
-
-                } else if (msg.type === 'final') {
-                    if (interimEl) interimEl.remove();
-
-                    const finalEl = document.createElement('div');
-                    finalEl.className = 'transcript-entry entry-user';
-                    finalEl.innerHTML = `<strong>You:</strong> ${msg.text}`;
-                    box.appendChild(finalEl);
-                    box.scrollTop = box.scrollHeight;
-
-                } else if (msg.type === 'assistant') {
-                    const assistantEl = document.createElement('div');
-                    assistantEl.className = 'transcript-entry entry-assistant';
-                    
-                    let tags = `<span class="tag">[${msg.intent || 'CONVERSATION'}]</span>`;
-                    if (msg.tool_used) {
-                        tags += ` <span class="tag tag-tool">[Tool: ${msg.tool_used}]</span>`;
-                    }
-
-                    assistantEl.innerHTML = `<div><strong>Aura:</strong> ${tags}</div><div style="margin-top:4px;">${msg.text}</div>`;
-                    box.appendChild(assistantEl);
-                    box.scrollTop = box.scrollHeight;
-                }
-            }
-
-            async function hangUp() {
-                log("Ending call...");
-                stopAiPlayback();
-                stopMicStreaming();
-                if (currentCall) {
-                    try {
-                        await currentCall.hangUp();
-                    } catch (e) {
-                        console.warn("Call hangup error:", e);
-                    }
-                    currentCall = null;
-                }
-                const hangupBtn = document.getElementById('hangupBtn');
-                if (hangupBtn) hangupBtn.style.display = 'none';
-
+                await startMicStreaming();
+                directBtn.style.display = 'none';
+                document.getElementById('hangupBtn').style.display = 'block';
+                log("🟢 Call Active! Speak naturally in English, Hindi, or Punjabi.");
+                isCallActive = true;
+            } catch (err) {
+                console.error("Direct call error:", err);
+                log("Call Error: " + err.message);
                 const directBtn = document.getElementById('directCallBtn');
                 if (directBtn) {
-                    directBtn.style.display = 'block';
                     directBtn.disabled = false;
+                    directBtn.style.display = 'block';
                 }
+                document.getElementById('hangupBtn').style.display = 'none';
+            }
+        }
 
-                const callBtn = document.getElementById('callBtn');
-                if (callBtn) {
-                    callBtn.disabled = false;
-                }
+        async function startMicStreaming() {
+            try {
+                let stream = null;
+                const selectEl = document.getElementById('micSelect');
+                const selectedDeviceId = selectEl ? selectEl.value : null;
 
-                const initBtn = document.getElementById('initBtn');
-                if (initBtn && !callAgent) {
-                    initBtn.disabled = false;
+                const audioConstraints = {
+                    channelCount: 1,
+                    echoCancellation: true,
+                    noiseSuppression: true,
+                    autoGainControl: true,
+                };
+                if (selectedDeviceId && selectedDeviceId !== 'default' && selectedDeviceId !== '') {
+                    audioConstraints.deviceId = { ideal: selectedDeviceId };
                 }
+                stream = await navigator.mediaDevices.getUserMedia({ audio: audioConstraints });
+                micStream = stream;
+
+                const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+                const wsUrl = `${protocol}//${window.location.host}/api/telephony/ws/audio-stream`;
+                audioWs = new WebSocket(wsUrl);
+
+                audioWs.onopen = () => {
+                    const liveIndicator = document.getElementById('liveIndicator');
+                    if (liveIndicator) liveIndicator.style.display = 'inline-block';
+                    setupWaveformVisualizer(stream);
+                };
+
+                audioWs.onerror = (err) => {
+                    console.error("[WS] Voice stream error:", err);
+                    log("⚠️ Voice stream connection error.");
+                };
+
+                audioWs.onclose = () => {
+                    hangUp();
+                };
+
+                audioWs.onmessage = (event) => {
+                    const msg = JSON.parse(event.data);
+                    handleSpeechEvent(msg);
+                };
+
+                const actualRate = audioContext.sampleRate;
+                const source = audioContext.createMediaStreamSource(micStream);
+                processorNode = audioContext.createScriptProcessor(4096, 1, 1);
 
                 const liveIndicator = document.getElementById('liveIndicator');
-                if (liveIndicator) liveIndicator.style.display = 'none';
+                processorNode.onaudioprocess = (e) => {
+                    if (!audioWs || audioWs.readyState !== WebSocket.OPEN) return;
+                    const rawFloatData = e.inputBuffer.getChannelData(0);
 
-                log("Call ended. Click 'Start Voice Call (Instant)' to speak again.");
+                    // Voice energy detector
+                    let sumSquares = 0;
+                    for (let i = 0; i < rawFloatData.length; i++) {
+                        sumSquares += rawFloatData[i] * rawFloatData[i];
+                    }
+                    const rms = Math.sqrt(sumSquares / rawFloatData.length);
+                    if (liveIndicator) {
+                        if (rms > 0.015) {
+                            liveIndicator.innerText = "TALKING 🗣️";
+                            liveIndicator.style.background = "#10b981";
+                        } else {
+                            liveIndicator.innerText = "MIC ACTIVE";
+                            liveIndicator.style.background = "#ef4444";
+                        }
+                    }
+
+                    const downsampled = downsampleTo16k(rawFloatData, actualRate);
+                    const pcmData = new Int16Array(downsampled.length);
+                    for (let i = 0; i < downsampled.length; i++) {
+                        const s = Math.max(-1, Math.min(1, downsampled[i]));
+                        pcmData[i] = s < 0 ? s * 0x8000 : s * 0x7FFF;
+                    }
+                    audioWs.send(pcmData.buffer);
+                };
+
+                source.connect(processorNode);
+                // Safe mute node to prevent mic loopback into user speakers
+                const muteGain = audioContext.createGain();
+                muteGain.gain.value = 0;
+                processorNode.connect(muteGain);
+                muteGain.connect(audioContext.destination);
+
+            } catch (err) {
+                console.error("Failed to start mic stream:", err);
+                log("Microphone access error: " + err.message);
+                throw err;
             }
-        </script>
-    </body>
-    </html>
+        }
+
+        function setupWaveformVisualizer(stream) {
+            try {
+                if (!audioContext) return;
+                analyserNode = audioContext.createAnalyser();
+                analyserNode.fftSize = 64;
+                const source = audioContext.createMediaStreamSource(stream);
+                source.connect(analyserNode);
+
+                const canvas = document.getElementById('waveformCanvas');
+                const ctx = canvas.getContext('2d');
+                const dataArray = new Uint8Array(analyserNode.frequencyBinCount);
+
+                function draw() {
+                    if (!isCallActive) {
+                        ctx.clearRect(0, 0, canvas.width, canvas.height);
+                        return;
+                    }
+                    requestAnimationFrame(draw);
+                    analyserNode.getByteFrequencyData(dataArray);
+                    ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+                    const barWidth = (canvas.width / dataArray.length) * 2.2;
+                    let x = 0;
+                    for (let i = 0; i < dataArray.length; i++) {
+                        const barHeight = (dataArray[i] / 255) * canvas.height;
+                        ctx.fillStyle = '#0d9488';
+                        ctx.fillRect(x, canvas.height - barHeight, barWidth - 2, barHeight);
+                        x += barWidth;
+                    }
+                }
+                draw();
+            } catch(e) {}
+        }
+
+        let currentSourceNode = null;
+        function stopAiPlayback() {
+            if (currentSourceNode) {
+                try {
+                    currentSourceNode.stop();
+                    currentSourceNode.disconnect();
+                } catch (e) {}
+                currentSourceNode = null;
+            }
+        }
+
+        async function playAudioBuffer(base64Data) {
+            try {
+                stopAiPlayback();
+                if (!audioContext) {
+                    const AudioCtx = window.AudioContext || window.webkitAudioContext;
+                    audioContext = new AudioCtx();
+                }
+                if (audioContext.state === 'suspended') {
+                    await audioContext.resume();
+                }
+
+                if (audioWs && audioWs.readyState === WebSocket.OPEN) {
+                    try { audioWs.send(JSON.stringify({ type: "playback_start" })); } catch(e) {}
+                }
+
+                const binaryString = window.atob(base64Data);
+                const bytes = new Uint8Array(binaryString.length);
+                for (let i = 0; i < binaryString.length; i++) {
+                    bytes[i] = binaryString.charCodeAt(i);
+                }
+                const audioBuffer = await audioContext.decodeAudioData(bytes.buffer.slice(0));
+                const sourceNode = audioContext.createBufferSource();
+                sourceNode.buffer = audioBuffer;
+                sourceNode.connect(audioContext.destination);
+                currentSourceNode = sourceNode;
+
+                sourceNode.onended = () => {
+                    if (currentSourceNode === sourceNode) {
+                        currentSourceNode = null;
+                        setTimeout(() => {
+                            if (audioWs && audioWs.readyState === WebSocket.OPEN) {
+                                try { audioWs.send(JSON.stringify({ type: "playback_end" })); } catch(e) {}
+                            }
+                        }, 100);
+                    }
+                };
+                sourceNode.start(0);
+            } catch (err) {
+                console.warn("Audio playback warning:", err);
+            }
+        }
+
+        function handleSpeechEvent(msg) {
+            const box = document.getElementById('transcriptBox');
+            let interimEl = document.getElementById('interimText');
+
+            if (msg.type === 'interrupt') {
+                stopAiPlayback();
+                return;
+            }
+
+            if (msg.type === 'audio') {
+                playAudioBuffer(msg.data);
+                return;
+            }
+
+            // Real-time user speech interim display
+            if (msg.type === 'interim') {
+                if (!interimEl) {
+                    interimEl = document.createElement('div');
+                    interimEl.id = 'interimText';
+                    interimEl.className = 'bubble-msg bubble-interim';
+                    box.appendChild(interimEl);
+                }
+                interimEl.innerText = "🗣️ You: " + msg.text + "...";
+                box.scrollTop = box.scrollHeight;
+                return;
+            }
+
+            // Finalized user speech turn
+            if (msg.type === 'final' || msg.type === 'user' || msg.event === 'user') {
+                if (interimEl) interimEl.remove();
+
+                const finalEl = document.createElement('div');
+                finalEl.className = 'bubble-msg bubble-user';
+                finalEl.innerHTML = `<strong>You:</strong> ${msg.text}`;
+                box.appendChild(finalEl);
+                box.scrollTop = box.scrollHeight;
+                return;
+            }
+
+            // Assistant response turn
+            if (msg.type === 'assistant') {
+                const assistantEl = document.createElement('div');
+                assistantEl.className = 'bubble-msg bubble-assistant';
+
+                let tags = `<span class="tag-pill">${msg.intent || 'CONVERSATION'}</span>`;
+                if (msg.tool_used) {
+                    tags += ` <span class="tag-pill tag-tool">⚙️ ${msg.tool_used}</span>`;
+                }
+
+                assistantEl.innerHTML = `<div><strong>Aura:</strong> ${tags}</div><div style="margin-top:5px;">${msg.text}</div>`;
+                box.appendChild(assistantEl);
+                box.scrollTop = box.scrollHeight;
+            }
+        }
+
+        function simulateSpokenPrompt(text) {
+            if (!isCallActive) {
+                alert("Please click 'Start Voice Call (Instant)' first to activate the live audio session.");
+                return;
+            }
+            if (audioWs && audioWs.readyState === WebSocket.OPEN) {
+                audioWs.send(JSON.stringify({ event: "simulated_speech", text: text }));
+            }
+        }
+
+        function hangUp() {
+            isCallActive = false;
+            stopAiPlayback();
+
+            const liveIndicator = document.getElementById('liveIndicator');
+            if (liveIndicator) liveIndicator.style.display = 'none';
+
+            if (processorNode) {
+                try { processorNode.disconnect(); } catch(e) {}
+                processorNode = null;
+            }
+            if (audioContext) {
+                try { audioContext.close(); } catch(e) {}
+                audioContext = null;
+            }
+            if (micStream) {
+                try { micStream.getTracks().forEach(t => t.stop()); } catch(e) {}
+                micStream = null;
+            }
+            if (audioWs) {
+                try { audioWs.close(); } catch(e) {}
+                audioWs = null;
+            }
+
+            const hangupBtn = document.getElementById('hangupBtn');
+            if (hangupBtn) hangupBtn.style.display = 'none';
+
+            const directBtn = document.getElementById('directCallBtn');
+            if (directBtn) {
+                directBtn.style.display = 'flex';
+                directBtn.disabled = false;
+            }
+
+            log("Call ended. Click 'Start Voice Call (Instant)' to speak again.");
+        }
+    </script>
+</body>
+</html>
     """

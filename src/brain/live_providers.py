@@ -43,7 +43,7 @@ class LiveRAGProvider(RAGProviderInterface):
                 )
 
             chunks = [r.text for r in results]
-            sources = [f"{r.source}#{r.id}" for r in results]
+            sources = [r.citation for r in results]
             return RAGResponse(
                 success=True,
                 retrieved_chunks=chunks,

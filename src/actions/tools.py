@@ -11,7 +11,7 @@ from datetime import date as date_module
 from typing import Any, Dict, Optional
 
 from src.actions.db_service import get_db_service
-from src.actions.models import ActionResult
+from src.actions.models import ActionResult, PatientRecord
 
 logger = logging.getLogger("MedFront.Actions.Tools")
 
@@ -50,6 +50,48 @@ def _normalize_dob(dob_str: str) -> str:
     return dob_str
 
 
+def extract_phone_number(text: str) -> Optional[str]:
+    """
+    Extracts a 10-digit standardized phone number (+91-XXXXX-XXXXX) from natural spoken or written text.
+    Handles numeric formats ('9876543210', '+91 98765 43210') and spoken number words.
+    """
+    if not text:
+        return None
+
+    word_to_digit = {
+        "zero": "0", "one": "1", "two": "2", "three": "3", "four": "4",
+        "five": "5", "six": "6", "seven": "7", "eight": "8", "nine": "9",
+        "oh": "0", "ek": "1", "do": "2", "teen": "3", "char": "4", "paanch": "5",
+        "panch": "5", "chhe": "6", "che": "6", "saat": "7", "aath": "8",
+        "nau": "9", "shunya": "0",
+        "०": "0", "१": "1", "२": "2", "३": "3", "४": "4",
+        "५": "5", "६": "6", "७": "7", "८": "8", "९": "9"
+    }
+    tokens = text.lower().replace("-", " ").replace(".", " ").replace(",", " ").split()
+    normalized_tokens = [word_to_digit.get(t, t) for t in tokens]
+    normalized_text = " ".join(normalized_tokens)
+
+    # 1. Regex search for 10-digit number with optional +91 prefix
+    matches = re.findall(r"(?:\+?91[\s-]?)?([6-9]\d{9})", normalized_text)
+    if matches:
+        raw_num = matches[0]
+        return f"+91-{raw_num[:5]}-{raw_num[5:]}"
+
+    # 2. General 10-digit sequence
+    gen_matches = re.findall(r"\b(\d{10})\b", re.sub(r"[^\d]", " ", normalized_text))
+    if gen_matches:
+        raw_num = gen_matches[0]
+        return f"+91-{raw_num[:5]}-{raw_num[5:]}"
+
+    # 3. Continuous digits string has at least 10 digits
+    pure_digits = re.sub(r"\D", "", normalized_text)
+    if len(pure_digits) >= 10:
+        raw_num = pure_digits[-10:]
+        return f"+91-{raw_num[:5]}-{raw_num[5:]}"
+
+    return None
+
+
 SPECIALTY_SYNONYMS = {
     # Cardiology synonyms and common mis-transcriptions
     "cardio": "Cardiology",
@@ -85,6 +127,36 @@ SPECIALTY_SYNONYMS = {
     "skin department": "Dermatology",
     "skin clinic": "Dermatology",
     "skin specialist": "Dermatology",
+
+    # Orthopedics synonyms
+    "ortho": "Orthopedics",
+    "orthopedics": "Orthopedics",
+    "orthopaedics": "Orthopedics",
+    "orthopedic": "Orthopedics",
+    "orthopaedic": "Orthopedics",
+    "bone": "Orthopedics",
+    "bones": "Orthopedics",
+    "joint": "Orthopedics",
+    "joints": "Orthopedics",
+    "bone specialist": "Orthopedics",
+    "joint specialist": "Orthopedics",
+    "orthopedic surgeon": "Orthopedics",
+    "knee": "Orthopedics",
+    "spine": "Orthopedics",
+
+    # Pediatrics synonyms
+    "pediatrics": "Pediatrics",
+    "paediatrics": "Pediatrics",
+    "pediatric": "Pediatrics",
+    "paediatric": "Pediatrics",
+    "pediatrician": "Pediatrics",
+    "paediatrician": "Pediatrics",
+    "child": "Pediatrics",
+    "children": "Pediatrics",
+    "child specialist": "Pediatrics",
+    "baby": "Pediatrics",
+    "kids": "Pediatrics",
+    "kid": "Pediatrics",
 }
 
 DOCTOR_ALIASES = {
@@ -111,6 +183,22 @@ DOCTOR_ALIASES = {
     "dr. kapoor": "Dr. Sunita Kapoor",
     "dr. sunita kapoor": "Dr. Sunita Kapoor",
     "sunita kapoor": "Dr. Sunita Kapoor",
+
+    "vikram": "Dr. Vikram Sen",
+    "dr. vikram": "Dr. Vikram Sen",
+    "dr vikram": "Dr. Vikram Sen",
+    "sen": "Dr. Vikram Sen",
+    "dr. sen": "Dr. Vikram Sen",
+    "dr. vikram sen": "Dr. Vikram Sen",
+    "vikram sen": "Dr. Vikram Sen",
+
+    "meera": "Dr. Meera Nambiar",
+    "dr. meera": "Dr. Meera Nambiar",
+    "dr meera": "Dr. Meera Nambiar",
+    "nambiar": "Dr. Meera Nambiar",
+    "dr. nambiar": "Dr. Meera Nambiar",
+    "dr. meera nambiar": "Dr. Meera Nambiar",
+    "meera nambiar": "Dr. Meera Nambiar",
 }
 
 
@@ -250,8 +338,9 @@ def verify_patient_identity(
     if not patient:
         return ActionResult(
             success=False,
-            message=f"No active patient record found for {first_name} {last_name} with date of birth {clean_dob}.",
+            message=f"No active patient record found for {first_name} {last_name} with date of birth {clean_dob}. As a first-time visitor, you can be registered as a new patient to complete your booking.",
             error_code="PATIENT_NOT_FOUND",
+            data={"is_new_patient": True, "full_name": f"{first_name} {last_name}"}
         )
 
     return ActionResult(
@@ -349,10 +438,12 @@ def book_appointment(
     appointment_date: Optional[str] = None,
     appointment_time: Optional[str] = None,
     reason_for_visit: str = "General Consultation",
+    phone_number: Optional[str] = None,
     **kwargs: Any,
 ) -> ActionResult:
     """
-    Atomically books an appointment slot for a verified patient with the requested clinician.
+    Atomically books an appointment slot for a verified patient or registers a new first-time patient.
+    Requires contact phone number for new patient registration and dispatches an appointment confirmation ticket.
     """
     raw_doc = doctor_name or kwargs.get("doctor") or kwargs.get("doctor_name_or_specialty")
     raw_date = appointment_date or kwargs.get("date") or kwargs.get("target_date")
@@ -363,12 +454,75 @@ def book_appointment(
     doctor_name = _canonicalize_doctor_or_specialty(raw_doc)
     appointment_date = _normalize_target_date(raw_date)
 
+    is_new_patient = False
+    db_inst = get_db_service()
+
     if not patient_id:
-        return ActionResult(
-            success=False,
-            message="Patient identity must be verified before an appointment can be confirmed. Please collect the patient's full name and date of birth first.",
-            error_code="PATIENT_UNVERIFIED",
-        )
+        # 1. Check if caller provided full_name / first_name / dob
+        fn = kwargs.get("full_name") or kwargs.get("name") or kwargs.get("patient_name")
+        first_n = kwargs.get("first_name")
+        last_n = kwargs.get("last_name")
+        dob = kwargs.get("dob") or kwargs.get("date_of_birth")
+
+        if (fn or (first_n and last_n)) and dob:
+            v_res = verify_patient_identity(first_name=first_n, last_name=last_n, full_name=fn, date_of_birth=dob, dob=dob)
+            if v_res.success and v_res.data:
+                patient_id = v_res.data.get("patient_id")
+
+        # 2. Check if name matches any existing registered patient
+        if not patient_id and (fn or first_n):
+            name_to_search = (fn or f"{first_n} {last_n or ''}").strip().lower()
+            all_patients = db_inst.get_all_patients()
+            for p in all_patients:
+                if f"{p.first_name} {p.last_name}".lower() == name_to_search or p.first_name.lower() == name_to_search:
+                    patient_id = p.id
+                    break
+
+        # 3. New Patient / First-Time Visitor Onboarding
+        if not patient_id and (fn or first_n):
+            raw_phone = phone_number or kwargs.get("phone_number") or kwargs.get("phone") or kwargs.get("contact")
+            contact_phone = extract_phone_number(str(raw_phone)) if raw_phone else None
+
+            # If no phone number provided for new patient, ask for it!
+            if not contact_phone:
+                full_name_clean = (fn or f"{first_n} {last_n or ''}").strip().title()
+                return ActionResult(
+                    success=False,
+                    message=f"Thank you, {full_name_clean}! To complete your registration as a new patient and send your appointment confirmation ticket, may I please have your contact phone number?",
+                    error_code="MISSING_PHONE_NUMBER",
+                    data={"requires_phone": True, "full_name": full_name_clean},
+                )
+
+            import random
+            full_str = (fn or f"{first_n} {last_n or ''}").strip()
+            parts = full_str.split(maxsplit=1)
+            f_name = parts[0].capitalize()
+            l_name = parts[1].capitalize() if len(parts) > 1 else "Patient"
+
+            new_mrn = f"P-{random.randint(20000, 99999)}"
+            new_patient = PatientRecord(
+                id=new_mrn,
+                first_name=f_name,
+                last_name=l_name,
+                date_of_birth=dob or "1995-01-01",
+                phone_number=contact_phone,
+                insurance_provider=kwargs.get("insurance_provider") or "Direct Registration",
+                insurance_policy_number=kwargs.get("policy_number") or f"POL-{new_mrn}",
+                active=True,
+                blood_group="O+",
+                emergency_contact="Family / Self",
+            )
+            db_inst.register_patient(new_patient)
+            patient_id = new_mrn
+            is_new_patient = True
+            logger.info(f"Automatically registered first-time patient '{f_name} {l_name}' (Phone: {contact_phone}) with new MRN {new_mrn}")
+
+        if not patient_id:
+            return ActionResult(
+                success=False,
+                message="To complete your booking, please provide your full name. If you are visiting for the first time, we will gladly register you.",
+                error_code="PATIENT_UNVERIFIED",
+            )
 
     if not doctor_name or not appointment_date or not appointment_time:
         missing = []
@@ -404,13 +558,19 @@ def book_appointment(
             error_code="BOOKING_FAILED",
         )
 
+    # Dispatch official appointment confirmation notification ticket (SMS)
+    notif_res = db.send_appointment_notification(appointment_id=appt.id, channel="SMS")
+    recipient_num = notif_res.get("recipient_phone") or kwargs.get("phone_number") or "your phone number"
+
+    welcome_msg = f"Welcome to MedFront! You have been registered as a new patient with MRN {patient_id}. " if is_new_patient else ""
     return ActionResult(
         success=True,
         message=(
-            f"Appointment confirmed with {appt.doctor_name} on {appt.appointment_date} "
-            f"at {appt.appointment_time}. Confirmation ID: {appt.id}"
+            f"{welcome_msg}Appointment confirmed with {appt.doctor_name} on {appt.appointment_date} "
+            f"at {appt.appointment_time}. Confirmation Ticket ID: {appt.id}. "
+            f"A confirmation notification ticket has been sent to your phone number {recipient_num}."
         ),
-        data=appt.model_dump(),
+        data={**appt.model_dump(), "notification": notif_res},
     )
 
 

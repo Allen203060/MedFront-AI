@@ -54,6 +54,10 @@ class Appointment(BaseModel):
         default_factory=lambda: datetime.now(timezone.utc).isoformat(),
         description="Timestamp when appointment was booked"
     )
+    notification_sent: bool = Field(default=False, description="Whether confirmation notification was dispatched")
+    notification_channel: str = Field(default="SMS", description="Notification channel (SMS/WhatsApp)")
+    notification_recipient: Optional[str] = Field(default=None, description="Recipient phone number")
+    notification_ticket_id: Optional[str] = Field(default=None, description="Dispatched ticket reference")
 
 
 class ActionResult(BaseModel):
@@ -62,3 +66,36 @@ class ActionResult(BaseModel):
     message: str = Field(..., description="Human/LLM-friendly summary of the action outcome")
     data: Optional[Dict[str, Any]] = Field(default=None, description="Structured payload or returned entity")
     error_code: Optional[str] = Field(default=None, description="Error classification if failed")
+
+
+class ClinicalNote(BaseModel):
+    """Structured clinical SOAP note created by clinician or ambient AI scribe."""
+    id: str = Field(..., description="Unique Note ID (e.g., 'NOTE-10023-1')")
+    patient_id: str = Field(..., description="Patient ID / MRN")
+    patient_name: str = Field(..., description="Full patient legal name")
+    doctor_id: str = Field(..., description="Clinician ID")
+    doctor_name: str = Field(..., description="Full doctor name")
+    appointment_id: Optional[str] = Field(default=None, description="Associated appointment ID if applicable")
+    date: str = Field(..., description="Clinical encounter date in YYYY-MM-DD")
+    subjective: str = Field(..., description="Chief complaint, history of presenting illness, patient symptoms")
+    objective: str = Field(..., description="Vitals, observations, physical examination notes")
+    assessment: str = Field(..., description="Primary clinical impression or diagnosis")
+    plan: str = Field(..., description="Prescriptions, diagnostics, lifestyle guidance, follow-up timeline")
+    raw_transcript: Optional[str] = Field(default=None, description="Raw transcription from consultation")
+    status: str = Field(default="CONFIRMED_BY_DOCTOR", description="Status: 'DRAFT', 'CONFIRMED_BY_DOCTOR'")
+    created_at: str = Field(
+        default_factory=lambda: datetime.now(timezone.utc).isoformat(),
+        description="Timestamp note was recorded"
+    )
+
+
+class NewPatientRequest(BaseModel):
+    """Request payload for receptionist patient onboarding."""
+    first_name: str
+    last_name: str
+    date_of_birth: str
+    phone_number: str
+    insurance_provider: Optional[str] = "Self-Pay / Not Disclosed"
+    insurance_policy_number: Optional[str] = None
+    emergency_contact: Optional[str] = None
+
