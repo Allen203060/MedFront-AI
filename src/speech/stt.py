@@ -52,10 +52,10 @@ class SpeechToTextEngine:
             speechsdk.PropertyId.SpeechServiceConnection_InitialSilenceTimeoutMs,
             str(initial_silence_timeout_ms),
         )
-        # Suppress breath/air turbulence false interim triggers by requiring 2 stable decoder hypotheses
+        # Instantaneous conversational barge-in: trigger recognizing on first stable hypothesis
         self.speech_config.set_property(
             speechsdk.PropertyId.SpeechServiceResponse_StablePartialResultThreshold,
-            "2",
+            "1",
         )
         # Enable TrueText for disfluency cleaning and inverse text normalization
         self.speech_config.set_property(

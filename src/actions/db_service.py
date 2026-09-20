@@ -6,6 +6,7 @@ Provides a unified abstraction for healthcare database operations with dual supp
 """
 
 import logging
+import re
 import uuid
 from abc import ABC, abstractmethod
 from datetime import datetime, date, timedelta
@@ -90,6 +91,11 @@ class DatabaseService(ABC):
     @abstractmethod
     def get_patient_by_id(self, patient_id: str) -> Optional[PatientRecord]:
         """Retrieve patient profile by unique ID / MRN."""
+        pass
+
+    @abstractmethod
+    def get_patient_by_phone(self, phone_number: str) -> Optional[PatientRecord]:
+        """Look up patient profile by phone number (ANI / Caller ID auto-lookup)."""
         pass
 
     @abstractmethod
@@ -452,6 +458,17 @@ class MockDatabaseService(DatabaseService):
 
     def get_patient_by_id(self, patient_id: str) -> Optional[PatientRecord]:
         return self._patients.get(patient_id.strip())
+
+    def get_patient_by_phone(self, phone_number: str) -> Optional[PatientRecord]:
+        digits = re.sub(r"\D", "", phone_number)
+        if not digits:
+            return None
+        target_suffix = digits[-10:] if len(digits) >= 10 else digits
+        for p in self._patients.values():
+            p_digits = re.sub(r"\D", "", p.phone_number or "")
+            if p_digits.endswith(target_suffix) and p.active:
+                return p
+        return None
 
     def get_doctor_schedules(
         self, doctor_name_or_specialty: str, target_date: str
@@ -938,6 +955,27 @@ class CosmosDatabaseService(DatabaseService):
             return PatientRecord(**item)
         except Exception:
             return None
+
+    def get_patient_by_phone(self, phone_number: str) -> Optional[PatientRecord]:
+        digits = re.sub(r"\D", "", phone_number)
+        if not digits:
+            return None
+        target_suffix = digits[-10:] if len(digits) >= 10 else digits
+        try:
+            # Query active patients
+            items = list(
+                self.patients_container.query_items(
+                    query="SELECT * FROM c WHERE c.active = true",
+                    enable_cross_partition_query=True,
+                )
+            )
+            for item in items:
+                p_digits = re.sub(r"\D", "", item.get("phone_number") or "")
+                if p_digits.endswith(target_suffix):
+                    return PatientRecord(**item)
+        except Exception as e:
+            logger.warning(f"Cosmos phone lookup error: {e}")
+        return None
 
     def get_doctor_schedules(
         self, doctor_name_or_specialty: str, target_date: str
