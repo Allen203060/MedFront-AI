@@ -76,7 +76,7 @@ def test_caller_id_greeting_with_upcoming_appointment():
 def test_caller_id_greeting_returning_patient_no_appointment():
     """
     Returning caller with no active upcoming appointment should get:
-    'Hello Mr. Malhotra, welcome back to MedFront Clinic. How may I assist you today?'
+    'Hello Mr. Malhotra, welcome back to MedFront Clinic. May I know your preferred language for this conversation: English, Hindi, or Punjabi?'
     """
     greeting, patient, next_appt = resolve_caller_identity_and_greeting("+91-99887-76655")
     assert patient is not None
@@ -84,7 +84,7 @@ def test_caller_id_greeting_returning_patient_no_appointment():
     assert next_appt is None
     assert "Mr. Malhotra" in greeting
     assert "welcome back to MedFront Clinic" in greeting
-    assert "How may I assist you today?" in greeting
+    assert "May I know your preferred language" in greeting
 
 
 def test_caller_id_greeting_anonymous_or_unknown():
@@ -94,12 +94,12 @@ def test_caller_id_greeting_anonymous_or_unknown():
     greeting, patient, next_appt = resolve_caller_identity_and_greeting("anonymous")
     assert patient is None
     assert next_appt is None
-    assert "Thank you for calling MedFront Health Clinic" in greeting
-    assert "My name is Aura" in greeting
+    assert "Thank you for calling MedFront" in greeting
+    assert "preferred language" in greeting
 
     greeting2, patient2, _ = resolve_caller_identity_and_greeting(None)
     assert patient2 is None
-    assert "Thank you for calling MedFront Health Clinic" in greeting2
+    assert "Thank you for calling MedFront" in greeting2
 
 
 def test_websocket_caller_id_handshake_recognized():

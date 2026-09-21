@@ -1,9 +1,10 @@
 import { useEffect, useRef, useState } from 'react';
-import { Mic, PhoneCall, PhoneOff, Send, VolumeX, Sparkles, ShieldCheck, UserCheck, Zap } from 'lucide-react';
+import { Mic, MicOff, PhoneCall, PhoneOff, Send, VolumeX, Sparkles, ShieldCheck, UserCheck, Zap } from 'lucide-react';
 import { useVoiceConsole } from '../hooks/useVoiceConsole';
 
 interface VoiceConsoleProps {
   onAppointmentBooked?: () => void;
+  onPatientVerified?: (patientId: string, patientName: string) => void;
 }
 
 const PRESET_CALLERS = [
@@ -29,7 +30,7 @@ const PRESET_CALLERS = [
   },
 ];
 
-export const VoiceConsole: React.FC<VoiceConsoleProps> = ({ onAppointmentBooked }) => {
+export const VoiceConsole: React.FC<VoiceConsoleProps> = ({ onAppointmentBooked, onPatientVerified }) => {
   const {
     isCalling,
     status,
@@ -38,6 +39,8 @@ export const VoiceConsole: React.FC<VoiceConsoleProps> = ({ onAppointmentBooked 
     isAgentSpeaking,
     recognizedPatient,
     analyser,
+    isMuted,
+    toggleMute,
     startCall,
     endCall,
     sendTextMessage,
@@ -53,6 +56,12 @@ export const VoiceConsole: React.FC<VoiceConsoleProps> = ({ onAppointmentBooked 
   useEffect(() => {
     feedEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages, interimText]);
+
+  useEffect(() => {
+    if (recognizedPatient && onPatientVerified) {
+      onPatientVerified(recognizedPatient.patient_id, recognizedPatient.name);
+    }
+  }, [recognizedPatient, onPatientVerified]);
 
   // Waveform visualization loop
   useEffect(() => {
@@ -210,10 +219,14 @@ export const VoiceConsole: React.FC<VoiceConsoleProps> = ({ onAppointmentBooked 
                 </button>
               </>
             ) : (
-              <div style={{ fontSize: '0.76rem', color: 'var(--teal-600)', display: 'flex', alignItems: 'center', gap: '4px' }}>
-                <Mic size={14} /> Listening for speech...
+              <div style={{ fontSize: '0.76rem', color: isMuted ? 'var(--red-500)' : 'var(--teal-600)', display: 'flex', alignItems: 'center', gap: '4px' }}>
+                {isMuted ? <MicOff size={14} /> : <Mic size={14} />} 
+                {isMuted ? 'Microphone Muted' : 'Listening for speech...'}
               </div>
             )}
+            <button className="btn-secondary" onClick={toggleMute} style={{ marginTop: '0.25rem', fontSize: '0.75rem', padding: '0.3rem 0.6rem' }}>
+              {isMuted ? 'Unmute Mic' : 'Mute Mic'}
+            </button>
           </div>
         )}
       </div>

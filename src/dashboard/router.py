@@ -108,7 +108,7 @@ async def get_dashboard_stats() -> Dict[str, Any]:
             "azure_openai": "CONNECTED" if settings.is_azure_openai_configured else "OFFLINE",
             "rag_mode": settings.effective_rag_mode.upper(),
         },
-        "clinic_name": "AuraCare Health Clinic",
+        "clinic_name": "MedFront",
     }
 
 

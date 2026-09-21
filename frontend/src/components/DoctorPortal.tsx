@@ -41,7 +41,7 @@ export const DoctorPortal: React.FC<DoctorPortalProps> = ({ doctors, patients, o
     setLoadingAppts(true);
     try {
       const data = await api.getDoctorAppointments(docName);
-      setAppointments(data);
+      setAppointments(data.filter(a => a.status !== 'CANCELLED'));
     } catch (err) {
       console.error('Failed to load appointments:', err);
     } finally {
@@ -298,6 +298,16 @@ export const DoctorPortal: React.FC<DoctorPortalProps> = ({ doctors, patients, o
                   </div>
                   <div style={{ fontSize: '0.82rem' }}>
                     Reason: {a.reason_for_visit}
+                  </div>
+                  <div style={{ marginTop: '0.75rem', display: 'flex', justifyContent: 'flex-end' }}>
+                    <button 
+                      className="btn-primary" 
+                      onClick={() => setSelectedPatientId(a.patient_id)}
+                      style={{ fontSize: '0.75rem', padding: '0.4rem 0.8rem' }}
+                    >
+                      <Wand2 size={12} style={{ marginRight: '0.3rem', display: 'inline' }} />
+                      Attend Appointment
+                    </button>
                   </div>
                 </div>
               ))}

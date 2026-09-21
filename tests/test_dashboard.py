@@ -28,7 +28,7 @@ def test_dashboard_html_page_served():
     """Verify GET /dashboard returns rich HTML frontend."""
     res = client.get("/dashboard")
     assert res.status_code == 200
-    assert "AuraCare Health Portal" in res.text
+    assert "MedFront Health Portal" in res.text
     assert "Hospital Dashboard" in res.text
     assert "Receptionist Inspector" in res.text
 

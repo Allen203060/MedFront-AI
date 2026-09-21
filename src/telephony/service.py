@@ -144,11 +144,11 @@ def resolve_caller_identity_and_greeting(
       - If no upcoming appointment:
         "Hello Mr./Ms. {last_name}, welcome back to MedFront Clinic. How may I assist you today?"
     If not recognized:
-      "Hello! Thank you for calling MedFront Health Clinic. My name is Aura. How may I assist you today?"
+      "Hello! Thank you for calling MedFront. My name is Aura. How may I assist you today?"
     """
     default_greeting = (
-        "Hello! Thank you for calling MedFront Health Clinic. "
-        "My name is Aura. How may I assist you today?"
+        "Hello! Thank you for calling MedFront. "
+        "May I know your preferred language for this conversation: English, Hindi, or Punjabi?"
     )
 
     if not caller_id or str(caller_id).lower() in ["anonymous", "unknown", "none", ""]:
@@ -181,12 +181,13 @@ def resolve_caller_identity_and_greeting(
         if next_appt:
             greeting = (
                 f"Hello {salutation} {patient.last_name}, welcome back to MedFront Clinic. "
+                f"May I know your preferred language for this conversation: English, Hindi, or Punjabi? "
                 f"Are you calling regarding your upcoming appointment with {next_appt.doctor_name}?"
             )
         else:
             greeting = (
                 f"Hello {salutation} {patient.last_name}, welcome back to MedFront Clinic. "
-                f"How may I assist you today?"
+                f"May I know your preferred language for this conversation: English, Hindi, or Punjabi?"
             )
 
         logger.info(

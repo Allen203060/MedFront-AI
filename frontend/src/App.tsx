@@ -14,8 +14,13 @@ import { DoctorPortal } from './components/DoctorPortal';
 import { ReceptionistPortal } from './components/ReceptionistPortal';
 import { PatientDirectory } from './components/PatientDirectory';
 import { VoiceConsole } from './components/VoiceConsole';
+import { PatientPortal } from './components/PatientPortal';
+import { AuthPage } from './components/AuthPage';
 
 export function App() {
+  const [showGuestVoice, setShowGuestVoice] = useState(false);
+  const [currentUser, setCurrentUser] = useState<{ id: string, name: string } | null>(null);
+  const [currentRole, setCurrentRole] = useState<'patient' | 'doctor' | 'admin' | null>(null);
   const [activeTab, setActiveTab] = useState<'doctor' | 'receptionist' | 'patients' | 'voice'>('doctor');
   const [darkMode, setDarkMode] = useState<boolean>(() => {
     return localStorage.getItem('medfront_dark_mode') === 'true';
@@ -58,6 +63,55 @@ export function App() {
     const interval = setInterval(loadData, 8000);
     return () => clearInterval(interval);
   }, []);
+
+  const handleLogin = (role: 'patient' | 'doctor' | 'admin', userId: string, userName: string) => {
+    setCurrentRole(role);
+    setCurrentUser({ id: userId, name: userName });
+    
+    // Set default tab based on role
+    if (role === 'doctor') setActiveTab('doctor');
+    else if (role === 'admin') setActiveTab('receptionist');
+  };
+
+  const handleLogout = () => {
+    setCurrentUser(null);
+    setCurrentRole(null);
+  };
+
+  if (showGuestVoice) {
+    return (
+      <div className="app-container">
+        <Header stats={stats} darkMode={darkMode} onToggleTheme={() => setDarkMode(!darkMode)} />
+        <main style={{ padding: '2rem' }}>
+           <VoiceConsole 
+              onAppointmentBooked={loadData} 
+              onPatientVerified={(id, name) => {
+                 // Login in the background, but do NOT close the voice console yet so the call continues!
+                 handleLogin('patient', id, name);
+              }}
+           />
+           <div style={{ textAlign: 'center', marginTop: '2rem' }}>
+              <button className="btn-secondary" onClick={() => setShowGuestVoice(false)}>
+                {currentUser ? 'Go to Patient Dashboard' : 'Back to Login'}
+              </button>
+           </div>
+        </main>
+      </div>
+    );
+  }
+
+  if (!currentUser || !currentRole) {
+    return <AuthPage onLogin={handleLogin} onGuestCall={() => setShowGuestVoice(true)} />;
+  }
+
+  if (currentRole === 'patient') {
+    return (
+      <div className="app-container">
+        <Header stats={stats} darkMode={darkMode} onToggleTheme={() => setDarkMode(!darkMode)} />
+        <PatientPortal patientId={currentUser.id} onLogout={handleLogout} />
+      </div>
+    );
+  }
 
   return (
     <div className="app-container">
@@ -109,36 +163,51 @@ export function App() {
 
       {/* Role & Feature Navigation Tabs */}
       <nav className="tabs-nav">
-        <button
-          className={`tab-btn ${activeTab === 'doctor' ? 'active' : ''}`}
-          onClick={() => setActiveTab('doctor')}
-        >
-          <Stethoscope size={18} />
-          <span>Doctor Portal & Scribe</span>
-        </button>
+        {currentRole === 'doctor' && (
+          <button
+            className={`tab-btn ${activeTab === 'doctor' ? 'active' : ''}`}
+            onClick={() => setActiveTab('doctor')}
+          >
+            <Stethoscope size={18} />
+            <span>Doctor Portal & Scribe</span>
+          </button>
+        )}
+
+        {(currentRole === 'admin' || currentRole === 'doctor') && (
+          <button
+            className={`tab-btn ${activeTab === 'patients' ? 'active' : ''}`}
+            onClick={() => setActiveTab('patients')}
+          >
+            <Users size={18} />
+            <span>Patient Directory</span>
+          </button>
+        )}
+
+        {currentRole === 'admin' && (
+          <>
+            <button
+              className={`tab-btn ${activeTab === 'receptionist' ? 'active' : ''}`}
+              onClick={() => setActiveTab('receptionist')}
+            >
+              <UserCheck size={18} />
+              <span>Receptionist & Schedule</span>
+            </button>
+            <button
+              className={`tab-btn ${activeTab === 'voice' ? 'active' : ''}`}
+              onClick={() => setActiveTab('voice')}
+            >
+              <PhoneCall size={18} />
+              <span>Aura Voice Console</span>
+            </button>
+          </>
+        )}
 
         <button
-          className={`tab-btn ${activeTab === 'receptionist' ? 'active' : ''}`}
-          onClick={() => setActiveTab('receptionist')}
+          className="tab-btn"
+          onClick={handleLogout}
+          style={{ marginLeft: 'auto', color: 'var(--red-500)' }}
         >
-          <UserCheck size={18} />
-          <span>Receptionist & Schedule</span>
-        </button>
-
-        <button
-          className={`tab-btn ${activeTab === 'patients' ? 'active' : ''}`}
-          onClick={() => setActiveTab('patients')}
-        >
-          <Users size={18} />
-          <span>Patient Directory</span>
-        </button>
-
-        <button
-          className={`tab-btn ${activeTab === 'voice' ? 'active' : ''}`}
-          onClick={() => setActiveTab('voice')}
-        >
-          <PhoneCall size={18} />
-          <span>Aura Voice Console</span>
+          <span>Sign Out</span>
         </button>
       </nav>
 

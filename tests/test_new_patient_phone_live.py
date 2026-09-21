@@ -20,7 +20,7 @@ async def test_new_patient_phone_flow():
         print("\n1. Turn 1: New patient requests booking without phone number...")
         await ws.send(json.dumps({
             "event": "simulated_speech",
-            "text": "I am visiting for the first time, my name is Amit Patel, please book me with Dr. Rajesh tomorrow at 10 AM"
+            "text": "I am visiting for the first time, my name is Amit Patel, please book me with Dr. Rajesh on 2029-01-01 at 10 AM"
         }))
 
         t1_reply = None
@@ -41,7 +41,7 @@ async def test_new_patient_phone_flow():
         print("\n2. Turn 2: Caller speaks contact phone number...")
         await ws.send(json.dumps({
             "event": "simulated_speech",
-            "text": "Sure, my phone number is 9876543210"
+            "text": "Sure, my phone number is 5555555555"
         }))
 
         t2_reply = None
@@ -57,7 +57,7 @@ async def test_new_patient_phone_flow():
 
         # Verification for Turn 2: Finalizes booking, provides MRN, confirmation ID, and mentions notification ticket sent
         assert "P-" in t2_reply or "Amit" in t2_reply, "Expected new patient registration/MRN"
-        assert "98765" in t2_reply or "ticket" in t2_reply.lower() or "notification" in t2_reply.lower(), "Expected notification ticket confirmation"
+        assert "55555" in t2_reply or "ticket" in t2_reply.lower() or "notification" in t2_reply.lower(), "Expected notification ticket confirmation"
         print("✅ Turn 2 Verified: Aura booked appointment and confirmed notification ticket sent to phone number.")
 
     # 3. Check Dashboard Notifications Endpoint

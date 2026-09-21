@@ -140,5 +140,90 @@ HEALTHCARE_TOOLS: List[Dict[str, Any]] = [
                 "required": ["patient_id"]
             }
         }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "update_patient_details",
+            "description": (
+                "Creates or updates patient details in the system. Use this to record phone number, address, insurance, or emergency contact info."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "patient_id": {
+                        "type": "string",
+                        "description": "Unique verified Patient ID (e.g., 'P-10023'). If new patient, omit this field."
+                    },
+                    "first_name": {
+                        "type": "string",
+                        "description": "Patient's legal first name."
+                    },
+                    "last_name": {
+                        "type": "string",
+                        "description": "Patient's legal last name."
+                    },
+                    "date_of_birth": {
+                        "type": "string",
+                        "description": "Patient's date of birth in YYYY-MM-DD format."
+                    },
+                    "phone_number": {
+                        "type": "string",
+                        "description": "Patient's contact phone number."
+                    },
+                    "address": {
+                        "type": "string",
+                        "description": "Patient's physical address."
+                    },
+                    "insurance_provider": {
+                        "type": "string",
+                        "description": "Patient's insurance provider name."
+                    },
+                    "emergency_contact": {
+                        "type": "string",
+                        "description": "Patient's emergency contact name and phone number."
+                    }
+                },
+                "required": ["first_name", "last_name", "date_of_birth", "phone_number"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "get_patient_test_reports",
+            "description": (
+                "Retrieves all lab test results and diagnostic reports for a verified patient."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "patient_id": {
+                        "type": "string",
+                        "description": "Unique verified Patient ID (e.g., 'P-10023')."
+                    }
+                },
+                "required": ["patient_id"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "get_patient_visit_summaries",
+            "description": (
+                "Retrieves all past visit summaries and doctor notes for a verified patient."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "patient_id": {
+                        "type": "string",
+                        "description": "Unique verified Patient ID (e.g., 'P-10023')."
+                    }
+                },
+                "required": ["patient_id"]
+            }
+        }
     }
 ]

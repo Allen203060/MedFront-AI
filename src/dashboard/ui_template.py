@@ -1,5 +1,5 @@
 """
-Clinical Medicine UI/UX Template for MedFront / AuraCare Healthcare Voice AI.
+Clinical Medicine UI/UX Template for MedFront / MedFront Healthcare Voice AI.
 Implements a state-of-the-art Clinical HealthTech Portal with:
 - Primary Medical Light Theme default with optional Dark Mode toggle
 - Ambient AI Clinical Scribe with bug-free speech recognition and GPT-4o SOAP generation
@@ -18,7 +18,7 @@ def render_dashboard_html() -> str:
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>AuraCare Health Portal | Hospital Clinical & Voice AI</title>
+    <title>MedFront Health Portal | Hospital Clinical & Voice AI</title>
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@400;500;600;700;800&family=Plus+Jakarta+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
@@ -954,7 +954,7 @@ def render_dashboard_html() -> str:
         <div class="brand-section">
             <div class="brand-logo">🏥</div>
             <div>
-                <div class="brand-title">AuraCare Health Portal</div>
+                <div class="brand-title">MedFront Health Portal</div>
                 <div class="brand-subtitle">
                     <span>Hospital Dashboard & Receptionist Inspector</span>
                 </div>

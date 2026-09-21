@@ -45,6 +45,20 @@ export const api = {
     return handleResponse<{ patient: PatientRecord; clinical_notes: SoapNote[] }>(res);
   },
 
+  async registerPatient(payload: {
+    first_name: string;
+    last_name: string;
+    date_of_birth: string;
+    phone_number: string;
+  }): Promise<{ success: boolean; message: string; patient?: PatientRecord }> {
+    const res = await fetch(`${API_BASE}/patients/register`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+    return handleResponse(res);
+  },
+
   async getAppointments(targetDate?: string): Promise<Appointment[]> {
     const params = new URLSearchParams();
     if (targetDate) params.append('target_date', targetDate);

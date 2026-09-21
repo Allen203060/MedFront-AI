@@ -116,9 +116,16 @@ class ConversationMemory:
         else:
             # Ongoing session is Hindi or Punjabi:
             if has_devanagari and not has_gurmukhi:
+                matched_hindi = [w for w in indic_words if w in hindi_script_markers]
+                if len(indic_words) <= 2 and not matched_hindi:
+                    return self.language
                 self.language = "Hindi"
                 return self.language
-            if has_gurmukhi:
+
+            if has_gurmukhi and not has_devanagari:
+                matched_punjabi = [w for w in indic_words if w in punjabi_script_markers]
+                if len(indic_words) <= 2 and not matched_punjabi:
+                    return self.language
                 self.language = "Punjabi"
                 return self.language
 

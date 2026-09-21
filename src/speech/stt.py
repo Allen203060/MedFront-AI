@@ -106,7 +106,7 @@ class SpeechToTextEngine:
             "Dr. Sunita Kapoor", "Dr. Sunita", "Sunita Kapoor", "Sunita",
             
             # Clinic branding & general terms
-            "MedFront Health Clinic", "MedFront", "AuraCare Health Clinic", "AuraCare",
+            "MedFront", "MedFront", "MedFront", "MedFront",
             "Medical Receptionist", "Aura",
             
             # Conversational scheduling & administrative terms

@@ -30,7 +30,7 @@ class MockRAGProvider(RAGProviderInterface):
                 )
             return RAGResponse(
                 success=True,
-                retrieved_chunks=["MedFront Health Clinic offers primary care, cardiology checkups, and outpatient services."],
+                retrieved_chunks=["MedFront offers primary care, cardiology checkups, and outpatient services."],
                 sources=["clinic_policy_faq.pdf#page=1"]
             )
 
