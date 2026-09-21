@@ -48,8 +48,6 @@ class ConversationEngine:
             response = self.client.chat.completions.create(
                 model=self.deployment_name,
                 messages=self.messages,
-                temperature=0.7,
-                max_tokens=300,
             )
             assistant_response = response.choices[0].message.content.strip()
             self.messages.append({"role": "assistant", "content": assistant_response})

@@ -196,9 +196,7 @@ class AgenticBrainOrchestrator:
                 messages=[
                     {"role": "system", "content": system_instruction},
                     {"role": "user", "content": user_content}
-                ],
-                temperature=temperature,
-                max_tokens=100,  # Strict cap for fast spoken responses (1-2 sentences)
+                ]
             )
             content = res.choices[0].message.content or ""
             return content.strip()

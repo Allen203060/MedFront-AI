@@ -627,8 +627,9 @@ def book_appointment(
                 phone_number=contact_phone,
                 insurance_provider=kwargs.get("insurance_provider") or "Direct Registration",
                 insurance_policy_number=kwargs.get("policy_number") or f"POL-{new_mrn}",
+                email=f"{f_name.lower()}.{l_name.lower()}@medfront.voice",
+                password=f_name.lower(),
                 active=True,
-                blood_group="O+",
                 emergency_contact="Family / Self",
             )
             db_inst.register_patient(new_patient)

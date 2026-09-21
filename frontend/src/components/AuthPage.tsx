@@ -14,7 +14,8 @@ export const AuthPage: React.FC<AuthPageProps> = ({ onLogin, onGuestCall }) => {
   const [role, setRole] = useState<Role>('patient');
   
   // Form fields
-  const [userId, setUserId] = useState('');
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
   const [name, setName] = useState('');
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
@@ -26,50 +27,27 @@ export const AuthPage: React.FC<AuthPageProps> = ({ onLogin, onGuestCall }) => {
 
     try {
       if (isLoginMode) {
-        // Simple mock login validation
-        if (!userId.trim()) {
-          setError('Please enter your ID.');
+        if (!email.trim() || !password.trim()) {
+          setError('Please enter your email and password.');
           setLoading(false);
           return;
         }
-
-        if (role === 'patient') {
-          const patients = await api.getPatients();
-          const patient = patients.find(p => p.patient_id === userId || p.patient_id === `P-${userId}`);
-          if (patient) {
-            onLogin('patient', patient.patient_id, `${patient.first_name} ${patient.last_name}`);
+        
+        try {
+          const res = await api.login({ email, password, role });
+          if (res.success && res.userId && res.userName) {
+            onLogin(role, res.userId, res.userName);
           } else {
-            if (userId.toLowerCase() === 'patient' || userId === '01') {
-              onLogin('patient', 'P-10023', 'Aarav Sharma');
-            } else {
-              setError('Patient ID not found.');
-            }
+            setError(res.message || 'Login failed.');
           }
-        } else if (role === 'doctor') {
-          const doctors = await api.getDoctors();
-          const doctor = doctors.find(d => d.id === userId || d.id === `DOC-${userId}`);
-          if (doctor) {
-            onLogin('doctor', doctor.id, doctor.name);
-          } else {
-            // Fallback for demo
-            if (userId === 'DOC-01' || userId === '01') {
-              onLogin('doctor', 'DOC-01', 'Dr. Ananya Rao');
-            } else {
-              setError('Doctor ID not found.');
-            }
-          }
-        } else if (role === 'admin') {
-          // Simple mock admin login
-          if (userId === 'admin') {
-            onLogin('admin', 'ADMIN', 'System Administrator');
-          } else {
-            setError('Invalid Admin credentials. Try ID "admin".');
-          }
+        } catch (e: any) {
+          setError(e.message || 'Invalid credentials.');
         }
+        
       } else {
         // Sign Up Mode
-        if (!name.trim()) {
-          setError('Please enter your full name.');
+        if (!name.trim() || !email.trim() || !password.trim()) {
+          setError('Please fill in all fields.');
           setLoading(false);
           return;
         }
@@ -85,6 +63,8 @@ export const AuthPage: React.FC<AuthPageProps> = ({ onLogin, onGuestCall }) => {
               last_name: ln,
               date_of_birth: '1990-01-01', // Dummy default for frontend signup
               phone_number: '+91-99999-99999', // Dummy default
+              email: email,
+              password: password,
             });
             if (res.success && res.patient) {
               newId = (res.patient as any).id || (res.patient as any).patient_id;
@@ -104,8 +84,7 @@ export const AuthPage: React.FC<AuthPageProps> = ({ onLogin, onGuestCall }) => {
           newId = 'ADMIN-NEW';
         }
 
-        // Notify user of their new ID (in a real app, this would be emailed or securely shown)
-        alert(`Successfully signed up!\n\nYour new ID is: ${newId}\nPlease save this ID to log in next time.`);
+        alert(`Successfully signed up!\n\nYour new ID is: ${newId}`);
         onLogin(role, newId, name);
       }
     } catch (err) {
@@ -173,12 +152,7 @@ export const AuthPage: React.FC<AuthPageProps> = ({ onLogin, onGuestCall }) => {
           </button>
         </div>
 
-        <div style={{ background: 'var(--blue-50)', border: '1px solid var(--blue-200)', borderRadius: '8px', padding: '1rem', marginBottom: '1.5rem', fontSize: '0.85rem', color: 'var(--blue-800)' }}>
-          <strong>Demo Credentials:</strong><br/>
-          Patient: <code>patient</code> or <code>P-10023</code><br/>
-          Doctor: <code>DOC-01</code> or <code>01</code><br/>
-          Admin: <code>admin</code>
-        </div>
+
 
         <form onSubmit={handleSubmit}>
           <h2 style={{ color: 'var(--text-color)', marginBottom: '1.5rem', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
@@ -202,18 +176,29 @@ export const AuthPage: React.FC<AuthPageProps> = ({ onLogin, onGuestCall }) => {
 
           <div style={{ marginBottom: '1.5rem' }}>
             <label style={{ display: 'block', marginBottom: '0.5rem', color: 'var(--text-color)', fontWeight: 500 }}>
-              {isLoginMode ? 'ID / Username' : 'Choose a Username (Optional)'}
+              Email Address
             </label>
             <input 
-              type="text" 
-              value={userId}
-              onChange={(e) => setUserId(e.target.value)}
-              placeholder={
-                role === 'patient' ? "e.g. P-10023" : 
-                role === 'doctor' ? "e.g. DOC-01" : "e.g. admin"
-              }
+              type="email" 
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+              placeholder="e.g. user@example.com"
               style={{ width: '100%', padding: '0.75rem', borderRadius: '8px', border: '1px solid var(--border-color)', background: 'var(--bg-color)', color: 'var(--text-color)' }}
-              required={isLoginMode}
+              required
+            />
+          </div>
+
+          <div style={{ marginBottom: '1.5rem' }}>
+            <label style={{ display: 'block', marginBottom: '0.5rem', color: 'var(--text-color)', fontWeight: 500 }}>
+              Password
+            </label>
+            <input 
+              type="password" 
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              placeholder="Enter your password"
+              style={{ width: '100%', padding: '0.75rem', borderRadius: '8px', border: '1px solid var(--border-color)', background: 'var(--bg-color)', color: 'var(--text-color)' }}
+              required
             />
           </div>
 

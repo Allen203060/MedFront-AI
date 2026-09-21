@@ -19,6 +19,8 @@ class PatientRecord(BaseModel):
     insurance_policy_number: Optional[str] = Field(default=None, description="Policy/Member ID")
     emergency_contact: Optional[str] = Field(default=None, description="Emergency contact name & phone")
     address: Optional[str] = Field(default=None, description="Patient physical address")
+    email: Optional[str] = Field(default=None, description="Patient email address for login")
+    password: Optional[str] = Field(default=None, description="Patient hashed or plain password")
     active: bool = Field(default=True, description="Account active status")
 
     @computed_field
@@ -100,6 +102,8 @@ class NewPatientRequest(BaseModel):
     last_name: str
     date_of_birth: str
     phone_number: str
+    email: Optional[str] = None
+    password: Optional[str] = None
     insurance_provider: Optional[str] = "Self-Pay / Not Disclosed"
     insurance_policy_number: Optional[str] = None
     emergency_contact: Optional[str] = None

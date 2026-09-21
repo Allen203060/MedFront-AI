@@ -282,6 +282,8 @@ class MockDatabaseService(DatabaseService):
                 insurance_provider="Star Health Comprehensive",
                 insurance_policy_number="SH-889210",
                 emergency_contact="Neha Sharma (+91-98765-43211)",
+                email="aarav.sharma@example.com",
+                password="aarav",
             ),
             PatientRecord(
                 id="P-10024",
@@ -292,6 +294,8 @@ class MockDatabaseService(DatabaseService):
                 insurance_provider="HDFC ERGO Health",
                 insurance_policy_number="HE-443102",
                 emergency_contact="Amit Patel (+91-98123-45679)",
+                email="priya.patel@example.com",
+                password="priya",
             ),
             PatientRecord(
                 id="P-10025",
@@ -302,6 +306,8 @@ class MockDatabaseService(DatabaseService):
                 insurance_provider="Care Health Insurance",
                 insurance_policy_number="CH-992318",
                 emergency_contact="Pooja Malhotra (+91-99887-76656)",
+                email="vikram.malhotra@example.com",
+                password="vikram",
             ),
             PatientRecord(
                 id="P-10026",
@@ -312,6 +318,8 @@ class MockDatabaseService(DatabaseService):
                 insurance_provider="Niva Bupa Health",
                 insurance_policy_number="NB-332190",
                 emergency_contact="Rajesh Gupta (+91-98223-34456)",
+                email="sneha.gupta@example.com",
+                password="sneha",
             ),
             PatientRecord(
                 id="P-10027",
@@ -322,6 +330,8 @@ class MockDatabaseService(DatabaseService):
                 insurance_provider="ICICI Lombard",
                 insurance_policy_number="IL-551029",
                 emergency_contact="Sunita Verma (+91-97112-23345)",
+                email="rahul.verma@example.com",
+                password="rahul",
             ),
             PatientRecord(
                 id="P-10028",
@@ -332,6 +342,8 @@ class MockDatabaseService(DatabaseService):
                 insurance_provider="Star Health Comprehensive",
                 insurance_policy_number="SH-889211",
                 emergency_contact="Kavita Desai (+91-98334-45567)",
+                email="ananya.desai@example.com",
+                password="ananya",
             ),
         ]
         for p in patients_data:

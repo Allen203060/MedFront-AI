@@ -17,6 +17,15 @@ async function handleResponse<T>(res: Response): Promise<T> {
 }
 
 export const api = {
+  async login(payload: { email: string; password: string; role: string }): Promise<{ success: boolean; userId?: string; userName?: string; role?: string; message?: string }> {
+    const res = await fetch(`/api/auth/login`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+    return handleResponse(res);
+  },
+
   async getStats(): Promise<DashboardStats> {
     const res = await fetch(`${API_BASE}/stats`);
     return handleResponse<DashboardStats>(res);
@@ -50,6 +59,8 @@ export const api = {
     last_name: string;
     date_of_birth: string;
     phone_number: string;
+    email?: string;
+    password?: string;
   }): Promise<{ success: boolean; message: string; patient?: PatientRecord }> {
     const res = await fetch(`${API_BASE}/patients/register`, {
       method: 'POST',
