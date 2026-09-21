@@ -13,9 +13,10 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 from fastapi import APIRouter, Request, Response, WebSocket, WebSocketDisconnect, status
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
+from starlette.websockets import WebSocketState
 
 from src.core.config import settings
-from src.telephony.service import telephony_service
+from src.telephony.service import telephony_service, resolve_caller_identity_and_greeting
 from src.speech.tts import TextToSpeechEngine
 from src.speech.stt import SpeechToTextEngine
 from src.brain.orchestrator import AgenticBrainOrchestrator
@@ -151,10 +152,12 @@ async def handle_call_callbacks(request: Request) -> Response:
             if (time.time() - active_call_state.get("last_audio_start_time", 0.0)) < 5.0:
                 logger.info("Greeting already streamed over WebSocket; skipping duplicate ACS Call Automation greeting.")
             else:
-                greeting_text = (
-                    "Hello! Thank you for calling MedFront Health Clinic. "
-                    "My name is Aura. How may I assist you today?"
+                caller_id = (
+                    data.get("from", {}).get("phoneNumber", {}).get("value")
+                    or data.get("callerId", {}).get("value")
+                    or data.get("from", {}).get("rawId")
                 )
+                greeting_text, patient, next_appt = resolve_caller_identity_and_greeting(caller_id)
                 active_call_state["last_played_text"] = greeting_text
                 active_call_state["is_playing_audio"] = True
                 active_call_state["last_audio_start_time"] = time.time()
@@ -191,11 +194,13 @@ async def handle_call_callbacks(request: Request) -> Response:
 
 
 @router.websocket("/ws/audio-stream")
+@router.websocket("/ws/audio")
 async def audio_stream_websocket(websocket: WebSocket) -> None:
     """
     WebSocket endpoint that receives raw 16kHz PCM audio from the browser,
     transcribes it using SpeechToTextEngine, processes it through AgenticBrainOrchestrator,
     and returns low-latency direct audio stream + triggers ACS Call Automation playback.
+    Supports Caller ID auto-lookup via query params (?caller_id=... or ?phone=...).
     """
     await websocket.accept()
     logger.info("Browser audio WebSocket connected. Initializing Agentic Brain session...")
@@ -207,11 +212,31 @@ async def audio_stream_websocket(websocket: WebSocket) -> None:
         tool_registry=LiveToolRegistry(),
     )
 
-    # Send opening greeting immediately over WebSocket so caller hears Aura with zero cloud delay
-    greeting_text = (
-        "Hello! Thank you for calling MedFront Health Clinic. "
-        "My name is Aura. How may I assist you today?"
-    )
+    ws_send_lock = asyncio.Lock()
+
+    async def safe_send_json(payload: dict) -> None:
+        """Thread-safe and async-safe serialized WebSocket sender."""
+        try:
+            async with ws_send_lock:
+                if websocket.client_state == WebSocketState.CONNECTED:
+                    await websocket.send_json(payload)
+        except Exception as ex:
+            logger.debug(f"WebSocket safe send error: {ex}")
+
+    # 1. Caller ID Auto-Lookup (Instant Zero-Friction Verification)
+    caller_id = websocket.query_params.get("caller_id") or websocket.query_params.get("phone")
+    greeting_text, patient, next_appt = resolve_caller_identity_and_greeting(caller_id)
+
+    if patient:
+        brain_orchestrator.memory.update_session(
+            patient_id=patient.patient_id,
+            verified_name=f"{patient.first_name} {patient.last_name}",
+        )
+        logger.info(f"[CALLER ID PRE-VERIFIED]: Linked session to Patient {patient.patient_id} ({patient.first_name} {patient.last_name})")
+
+    # Record greeting in conversational memory
+    brain_orchestrator.memory.add_assistant_message(greeting_text)
+
     active_call_state["playback_id"] = active_call_state.get("playback_id", 0) + 1
     current_pid = active_call_state["playback_id"]
     active_call_state["last_played_text"] = greeting_text
@@ -226,19 +251,27 @@ async def audio_stream_websocket(websocket: WebSocket) -> None:
             active_call_state["last_playback_end_time"] = time.time()
             logger.debug(f"[Audio Playback] Auto-cleared is_playing_audio for sequence #{p_id}")
 
-    await websocket.send_json({
+    await safe_send_json({
         "type": "assistant",
         "text": greeting_text,
         "intent": "CASUAL_CONVERSATION",
         "rag_used": False,
         "tool_used": None,
+        "recognized_patient": {
+            "patient_id": patient.patient_id,
+            "name": f"{patient.first_name} {patient.last_name}",
+            "phone": patient.phone_number,
+            "upcoming_doctor": next_appt.doctor_name if next_appt else None,
+            "appointment_date": next_appt.appointment_date if next_appt else None,
+            "appointment_time": next_appt.appointment_time if next_appt else None,
+        } if patient else None,
     })
 
     if tts_engine and settings.azure_speech_key:
         try:
             greeting_audio = tts_engine.synthesize_text(greeting_text)
             b64_greeting = base64.b64encode(greeting_audio).decode("utf-8")
-            await websocket.send_json({"type": "audio", "data": b64_greeting})
+            await safe_send_json({"type": "audio", "data": b64_greeting})
             # Schedule auto-reset of playing flag after greeting audio length (16kHz 16-bit mono = 32000 bytes/sec)
             greeting_duration = max(1.0, len(greeting_audio) / 32000.0)
             asyncio.create_task(_auto_clear_playback(greeting_duration, current_pid))
@@ -247,35 +280,33 @@ async def audio_stream_websocket(websocket: WebSocket) -> None:
             active_call_state["is_playing_audio"] = False
 
     def on_interim(text: str) -> None:
-        """Fires when interim speech is recognized (Barge-in trigger)."""
+        """Fires when interim speech is recognized (Instant Barge-in trigger)."""
         clean_text = text.strip()
-        words = [w for w in re.findall(r'\b\w+\b', clean_text) if len(w) >= 2]
-        if not words:
+        if not clean_text:
             return
 
-        # 1. Barge-In: If AI is actively playing and user speaks, cancel playback immediately!
-        if active_call_state.get("is_playing_audio"):
-            call_id = active_call_state.get("call_connection_id")
-            logger.info(f"[BARGE-IN TRIGGERED] Caller spoke word '{clean_text}'. Interrupting playback...")
-            active_call_state["is_playing_audio"] = False
-            active_call_state["last_playback_end_time"] = time.time()
+        # 1. Instant Barge-In: interrupt playback immediately on first user speech detection
+        active_call_state["is_playing_audio"] = False
+        active_call_state["last_playback_end_time"] = time.time()
+        logger.info(f"[BARGE-IN TRIGGERED] Caller interim speech: '{clean_text}'. Interrupting playback...")
 
-            # Signal browser to immediately halt active Web Audio playback
-            asyncio.run_coroutine_threadsafe(
-                websocket.send_json({"type": "interrupt"}),
-                loop,
-            )
+        call_id = active_call_state.get("call_connection_id")
+        if call_id and telephony_service.client:
+            try:
+                conn = telephony_service.client.get_call_connection(call_id)
+                conn.cancel_all_media_operations()
+            except Exception as e:
+                logger.warning(f"Barge-in cancel error: {e}")
 
-            if call_id and telephony_service.client:
-                try:
-                    conn = telephony_service.client.get_call_connection(call_id)
-                    conn.cancel_all_media_operations()
-                except Exception as e:
-                    logger.warning(f"Barge-in cancel error: {e}")
-
-        # 2. Push interim text back to browser UI
+        # Signal browser to immediately halt active Web Audio playback
         asyncio.run_coroutine_threadsafe(
-            websocket.send_json({"type": "interim", "text": clean_text}),
+            safe_send_json({"type": "interrupt"}),
+            loop,
+        )
+
+        # Push interim text back to browser UI
+        asyncio.run_coroutine_threadsafe(
+            safe_send_json({"type": "interim", "text": clean_text}),
             loop,
         )
 
@@ -284,8 +315,7 @@ async def audio_stream_websocket(websocket: WebSocket) -> None:
         if not last_played_text or not transcribed_text:
             return False
             
-        # 1. Physical constraint: Echo can ONLY occur while the speaker is physically playing audio!
-        # If AI is not actively playing audio right now (or has stopped >0.3s ago), it is 100% genuine user speech.
+        # Echo can ONLY occur while the speaker is physically playing audio
         if not active_call_state.get("is_playing_audio"):
             last_end = active_call_state.get("last_playback_end_time", 0)
             if time.time() - last_end > 0.3:
@@ -296,12 +326,10 @@ async def audio_stream_websocket(websocket: WebSocket) -> None:
         if not user_words or not ai_words:
             return False
 
-        # Common user greetings, affirmations, and scheduling terms must NEVER be filtered as echo
-        safe_words = {"hello", "hi", "hey", "yes", "no", "cardio", "cardiology", "doctor", "appointment", "book", "schedule", "tomorrow", "today", "help", "aura"}
+        safe_words = {"hello", "hi", "hey", "yes", "no", "cardio", "cardiology", "doctor", "appointment", "book", "schedule", "tomorrow", "today", "help", "aura", "wait"}
         if any(w in safe_words for w in user_words):
             return False
 
-        # Only drop if the transcribed text is a near-exact verbatim echo (>75% overlap) and has at least 4 words
         overlap_count = sum(1 for w in user_words if w in ai_words)
         overlap_ratio = overlap_count / len(user_words)
         if overlap_ratio >= 0.75 and len(user_words) >= 4:
@@ -316,29 +344,27 @@ async def audio_stream_websocket(websocket: WebSocket) -> None:
 
         logger.info(f"[STT Finalized]: '{clean_text}'")
 
+        # Guarantee audio playback is interrupted upon finalized speech
+        active_call_state["is_playing_audio"] = False
+        active_call_state["last_playback_end_time"] = time.time()
+        asyncio.run_coroutine_threadsafe(
+            safe_send_json({"type": "interrupt"}),
+            loop,
+        )
+
         # 1. Filter acoustic loopback feedback (only during active speaker output)
         last_spoken = active_call_state.get("last_played_text", "").strip()
         if _is_acoustic_speaker_echo(clean_text, last_spoken):
             logger.info(f"[ECHO SUPPRESSION]: Filtered acoustic speaker loopback: '{clean_text}'")
             return
 
-        # 2. If AI was still playing, genuine caller barge-in! Interrupt audio and process turn.
-        if active_call_state.get("is_playing_audio"):
-            logger.info(f"[BARGE-IN FINALIZED] User completed turn during playback: '{clean_text}'")
-            active_call_state["is_playing_audio"] = False
-            active_call_state["last_playback_end_time"] = time.time()
-            asyncio.run_coroutine_threadsafe(
-                websocket.send_json({"type": "interrupt"}),
-                loop,
-            )
-
-        # 3. Push verified User transcript to browser UI
+        # 2. Push verified User transcript to browser UI
         asyncio.run_coroutine_threadsafe(
-            websocket.send_json({"type": "final", "event": "user", "text": clean_text}),
+            safe_send_json({"type": "final", "event": "user", "text": clean_text}),
             loop,
         )
 
-        # 4. Process turn through Agentic Brain (Azure OpenAI)
+        # 3. Process turn through Agentic Brain (Azure OpenAI)
         start_brain = time.perf_counter()
         brain_output = brain_orchestrator.process_turn(clean_text)
         speech_reply = brain_output.speech_text
@@ -348,9 +374,9 @@ async def audio_stream_websocket(websocket: WebSocket) -> None:
 
         logger.info(f"[Brain Output in {brain_duration:.0f}ms]: '{speech_reply}' | Intent={intent_name}")
 
-        # 5. Push Assistant Text & Badges to Browser UI
+        # 4. Push Assistant Text & Badges to Browser UI
         asyncio.run_coroutine_threadsafe(
-            websocket.send_json({
+            safe_send_json({
                 "type": "assistant",
                 "text": speech_reply,
                 "intent": intent_name,
@@ -360,7 +386,7 @@ async def audio_stream_websocket(websocket: WebSocket) -> None:
             loop,
         )
 
-        # 6. Synthesize Neural TTS (Azure AI Speech)
+        # 5. Synthesize Neural TTS (Azure AI Speech)
         if tts_engine and settings.azure_speech_key:
             try:
                 active_call_state["playback_id"] = active_call_state.get("playback_id", 0) + 1
@@ -374,10 +400,10 @@ async def audio_stream_websocket(websocket: WebSocket) -> None:
                 tts_duration = (time.perf_counter() - tts_start) * 1000.0
                 logger.info(f"[TTS Synthesized in {tts_duration:.0f}ms]: {len(audio_bytes)} bytes")
 
-                # A. Send DIRECT audio to browser over WebSocket (Zero-latency instant playback)
+                # Send DIRECT audio to browser over WebSocket (Zero-latency instant playback)
                 b64_audio = base64.b64encode(audio_bytes).decode("utf-8")
                 asyncio.run_coroutine_threadsafe(
-                    websocket.send_json({"type": "audio", "data": b64_audio}),
+                    safe_send_json({"type": "audio", "data": b64_audio}),
                     loop,
                 )
 
@@ -385,7 +411,7 @@ async def audio_stream_websocket(websocket: WebSocket) -> None:
                 reply_duration = max(1.0, len(audio_bytes) / 32000.0)
                 asyncio.run_coroutine_threadsafe(_auto_clear_playback(reply_duration, turn_pid), loop)
 
-                # B. Only trigger ACS play_audio for external telephony calls (when no direct WebSocket exists)
+                # Only trigger ACS play_audio for external telephony calls (when no direct WebSocket exists)
                 call_id = active_call_state.get("call_connection_id")
                 if call_id and settings.acs_callback_base_url and not active_call_state.get("has_websocket_client"):
                     audio_id = f"reply_{int(time.time())}"
@@ -424,12 +450,32 @@ async def audio_stream_websocket(websocket: WebSocket) -> None:
                 try:
                     data = json.loads(message["text"])
                     msg_type = data.get("type") or data.get("event")
-                    if msg_type == "playback_start":
+                    if msg_type in ["client_barge_in", "interrupt"]:
+                        logger.info("[Client Barge-in Signal]: Instant speaker cutoff received from browser.")
+                        active_call_state["is_playing_audio"] = False
+                        active_call_state["last_playback_end_time"] = time.time()
+                        call_id = active_call_state.get("call_connection_id")
+                        if call_id and telephony_service.client:
+                            try:
+                                conn = telephony_service.client.get_call_connection(call_id)
+                                conn.cancel_all_media_operations()
+                            except Exception:
+                                pass
+                    elif msg_type == "playback_start":
                         active_call_state["is_playing_audio"] = True
                     elif msg_type == "playback_end":
                         active_call_state["is_playing_audio"] = False
                         active_call_state["last_playback_end_time"] = time.time()
-                    elif msg_type in ["simulated_speech", "text_input"] and data.get("text"):
+                    elif msg_type == "caller_handshake":
+                        c_id = data.get("caller_id") or data.get("phone")
+                        if c_id:
+                            g_text, pat, n_appt = resolve_caller_identity_and_greeting(c_id)
+                            if pat:
+                                brain_orchestrator.memory.update_session(
+                                    patient_id=pat.patient_id,
+                                    verified_name=f"{pat.first_name} {pat.last_name}"
+                                )
+                    elif msg_type in ["simulated_speech", "text_input", "prompt"] and data.get("text"):
                         prompt_text = data.get("text")
                         logger.info(f"[WS Text Input]: Processing spoken prompt: '{prompt_text}'")
                         on_final(prompt_text)

@@ -1379,6 +1379,16 @@ def render_dashboard_html() -> str:
                         </div>
                     </div>
 
+                    <div class="form-group" style="margin-bottom: 0.85rem;">
+                        <label>Incoming Caller ID (ANI Auto-Lookup):</label>
+                        <select id="voiceConsoleCallerIdSelect" class="form-control" style="font-size: 0.82rem;">
+                            <option value="+91-98765-43210">Aarav Sharma (+91-98765-43210) — Has Upcoming Appt</option>
+                            <option value="+91-98123-45678">Priya Patel (+91-98123-45678) — Returning Patient</option>
+                            <option value="+91-99887-76655">Vikram Malhotra (+91-99887-76655) — Returning Patient</option>
+                            <option value="">Unknown / Anonymous Caller (Default Greeting)</option>
+                        </select>
+                    </div>
+
                     <div class="form-group" style="margin-bottom: 1.25rem;">
                         <label>Microphone Hardware:</label>
                         <select id="voiceConsoleMicSelect" class="form-control" style="font-size: 0.82rem;">
@@ -2582,8 +2592,11 @@ def render_dashboard_html() -> str:
                 });
                 consoleMicStream = stream;
 
+                const callerSelect = document.getElementById('voiceConsoleCallerIdSelect');
+                const callerId = callerSelect ? callerSelect.value : '';
                 const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-                const wsUrl = `${protocol}//${window.location.host}/api/telephony/ws/audio-stream`;
+                const query = callerId ? `?caller_id=${encodeURIComponent(callerId)}` : '';
+                const wsUrl = `${protocol}//${window.location.host}/api/telephony/ws/audio-stream${query}`;
                 consoleAudioWs = new WebSocket(wsUrl);
 
                 consoleAudioWs.onopen = () => {
@@ -2622,6 +2635,22 @@ def render_dashboard_html() -> str:
                 consoleProcessorNode.onaudioprocess = (e) => {
                     if (!consoleAudioWs || consoleAudioWs.readyState !== WebSocket.OPEN) return;
                     const inputData = e.inputBuffer.getChannelData(0);
+
+                    // Zero-Latency Client-Side RMS Barge-In VAD
+                    if (currentConsoleSourceNode) {
+                        let sumSq = 0;
+                        for (let i = 0; i < inputData.length; i++) {
+                            sumSq += inputData[i] * inputData[i];
+                        }
+                        const rms = Math.sqrt(sumSq / inputData.length);
+                        if (rms > 0.035) {
+                            stopConsoleAiPlayback();
+                            try {
+                                consoleAudioWs.send(JSON.stringify({ type: "client_barge_in", event: "client_barge_in" }));
+                            } catch(err) {}
+                        }
+                    }
+
                     const downsampled = downsampleTo16kHz(inputData, consoleAudioCtx.sampleRate);
                     const pcm16 = new Int16Array(downsampled.length);
                     for (let i = 0; i < downsampled.length; i++) {
@@ -2776,6 +2805,25 @@ def render_dashboard_html() -> str:
             } else if (msgType === 'assistant' || msgType === 'agent_response') {
                 const interim = document.getElementById('consoleInterimDraft');
                 if (interim) interim.remove();
+
+                if (msg.recognized_patient) {
+                    const rp = msg.recognized_patient;
+                    const rEl = document.createElement('div');
+                    rEl.style.background = '#f0fdf4';
+                    rEl.style.border = '1px solid #bbf7d0';
+                    rEl.style.borderRadius = '8px';
+                    rEl.style.padding = '0.65rem 0.85rem';
+                    rEl.style.marginBottom = '0.75rem';
+                    rEl.style.fontSize = '0.8rem';
+                    rEl.style.color = '#166534';
+                    let apptInfo = '';
+                    if (rp.upcoming_doctor) {
+                        apptInfo = `<br><span style="color:#15803d; font-size:0.75rem;">📅 Upcoming Appt: <b>${rp.upcoming_doctor}</b> (${rp.appointment_date} at ${rp.appointment_time})</span>`;
+                    }
+                    rEl.innerHTML = `<b>👤 Verified Caller (200ms Handshake):</b> ${rp.name} (MRN: ${rp.patient_id})${apptInfo}`;
+                    feed.appendChild(rEl);
+                }
+
                 const el = document.createElement('div');
                 el.className = 'bubble-msg bubble-agent';
                 let extra = '';
@@ -2789,7 +2837,7 @@ def render_dashboard_html() -> str:
                 feed.appendChild(el);
                 feed.scrollTop = feed.scrollHeight;
 
-                const audioData = msg.audio_base64;
+                const audioData = msg.audio_base64 || msg.audio || msg.data;
                 if (audioData && consoleAudioCtx) {
                     playPcmAudioBase64(audioData);
                 }
@@ -2799,8 +2847,8 @@ def render_dashboard_html() -> str:
                     loadDoctorAppointments();
                     loadPatientsDirectory();
                 }
-            } else if (msgType === 'audio' && msg.data && consoleAudioCtx) {
-                playPcmAudioBase64(msg.data);
+            } else if (msgType === 'audio' && (msg.data || msg.audio) && consoleAudioCtx) {
+                playPcmAudioBase64(msg.data || msg.audio);
             }
         }
 

@@ -21,6 +21,10 @@ class PatientRecord(BaseModel):
     emergency_contact: Optional[str] = Field(default=None, description="Emergency contact name & phone")
     active: bool = Field(default=True, description="Account active status")
 
+    @property
+    def patient_id(self) -> str:
+        return self.id
+
 
 class TimeSlot(BaseModel):
     """An individual appointment time window."""

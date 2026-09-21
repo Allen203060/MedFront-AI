@@ -5,7 +5,7 @@ Handles Call Automation (Web VoIP & PSTN) and Identity/Token generation.
 
 import logging
 import time
-from typing import Dict, Optional
+from typing import Any, Dict, Optional, Tuple
 from azure.communication.callautomation import (
     CallAutomationClient,
     CallConnectionClient,
@@ -130,3 +130,71 @@ class TelephonyService:
 
 # Export singleton
 telephony_service = TelephonyService()
+
+
+def resolve_caller_identity_and_greeting(
+    caller_id: Optional[str] = None,
+) -> Tuple[str, Optional[Any], Optional[Any]]:
+    """
+    Caller ID Auto-Lookup (Instant Zero-Friction Verification):
+    Queries Cosmos DB Layer A by phone number during call setup handshake.
+    If recognized:
+      - If upcoming appointment exists:
+        "Hello Mr./Ms. {last_name}, welcome back to MedFront Clinic. Are you calling regarding your upcoming appointment with {doctor_name}?"
+      - If no upcoming appointment:
+        "Hello Mr./Ms. {last_name}, welcome back to MedFront Clinic. How may I assist you today?"
+    If not recognized:
+      "Hello! Thank you for calling MedFront Health Clinic. My name is Aura. How may I assist you today?"
+    """
+    default_greeting = (
+        "Hello! Thank you for calling MedFront Health Clinic. "
+        "My name is Aura. How may I assist you today?"
+    )
+
+    if not caller_id or str(caller_id).lower() in ["anonymous", "unknown", "none", ""]:
+        return default_greeting, None, None
+
+    from datetime import date
+    from src.actions.db_service import get_db_service
+
+    try:
+        db = get_db_service()
+        patient = db.get_patient_by_phone(str(caller_id))
+        if not patient:
+            return default_greeting, None, None
+
+        appts = db.get_patient_appointments(patient.patient_id)
+        today_str = str(date.today())
+        upcoming = [
+            a for a in appts 
+            if getattr(a, "status", "") == "CONFIRMED" and getattr(a, "appointment_date", "") >= today_str
+        ]
+        upcoming.sort(key=lambda x: (x.appointment_date, x.appointment_time))
+        next_appt = upcoming[0] if upcoming else None
+
+        salutation = "Mr."
+        if hasattr(patient, "gender") and patient.gender and patient.gender.lower().startswith("f"):
+            salutation = "Ms."
+        elif patient.first_name.lower() in ["priya", "divya", "meera", "sunita", "ananya", "neha", "pooja"]:
+            salutation = "Ms."
+
+        if next_appt:
+            greeting = (
+                f"Hello {salutation} {patient.last_name}, welcome back to MedFront Clinic. "
+                f"Are you calling regarding your upcoming appointment with {next_appt.doctor_name}?"
+            )
+        else:
+            greeting = (
+                f"Hello {salutation} {patient.last_name}, welcome back to MedFront Clinic. "
+                f"How may I assist you today?"
+            )
+
+        logger.info(
+            f"[CALLER ID RECOGNIZED]: Patient {patient.patient_id} ({patient.first_name} {patient.last_name}) "
+            f"via phone {caller_id}. Upcoming appointment: {next_appt.id if next_appt else 'None'}"
+        )
+        return greeting, patient, next_appt
+
+    except Exception as e:
+        logger.warning(f"Error in resolve_caller_identity_and_greeting: {e}")
+        return default_greeting, None, None
