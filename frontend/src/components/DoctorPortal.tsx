@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Stethoscope, Calendar, CheckCircle2, RefreshCw, Wand2, Shield } from 'lucide-react';
+import { Stethoscope, Calendar, CheckCircle2, RefreshCw, Wand2, Shield, Mic, Square } from 'lucide-react';
 import type { Appointment, Doctor, PatientRecord, SoapNote } from '../types';
 import { api } from '../services/api';
 
@@ -49,16 +49,27 @@ export const DoctorPortal: React.FC<DoctorPortalProps> = ({ doctors, patients, o
     }
   };
 
-  const handleLoadSampleTranscript = () => {
-    setTranscript(
-      'Doctor: Good morning Aarav, how have you been feeling since your last visit?\n' +
-      'Patient: Good morning Doctor. I have had recurrent chest tightness and mild shortness of breath when climbing stairs.\n' +
-      'Doctor: Blood pressure is 142/88 mmHg. Heart rate is 78 bpm. Lungs clear. ECG shows sinus rhythm with no acute ischemia. We will start Metoprolol 25mg daily and schedule a 2D echocardiogram.'
-    );
+  const [isRecording, setIsRecording] = useState(false);
+
+  const handleScribeSimulation = () => {
+    if (isRecording) {
+      setIsRecording(false);
+      return;
+    }
+    setTranscript('Listening to patient encounter...');
+    setIsRecording(true);
+    setTimeout(() => {
+      setIsRecording(false);
+      setTranscript(
+        'Doctor: Good morning Aarav, how have you been feeling since your last visit?\n' +
+        'Patient: Good morning Doctor. I have had recurrent chest tightness and mild shortness of breath when climbing stairs.\n' +
+        'Doctor: Blood pressure is 142/88 mmHg. Heart rate is 78 bpm. Lungs clear. ECG shows sinus rhythm with no acute ischemia. We will start Metoprolol 25mg daily and schedule a 2D echocardiogram.'
+      );
+    }, 2500);
   };
 
   const handleGenerateSoap = async () => {
-    if (!transcript.trim()) return;
+    if (!transcript.trim() || transcript === 'Listening to patient encounter...') return;
     setIsGeneratingSoap(true);
     setConfirmStatus(null);
 
@@ -143,8 +154,13 @@ export const DoctorPortal: React.FC<DoctorPortalProps> = ({ doctors, patients, o
               <Wand2 size={20} color="#0d9488" />
               <span>Ambient AI Clinical Scribe</span>
             </div>
-            <button className="btn-secondary" onClick={handleLoadSampleTranscript} style={{ fontSize: '0.76rem', padding: '0.3rem 0.6rem' }}>
-              Load Sample Encounter
+            <button 
+              className={isRecording ? "btn-primary" : "btn-secondary"} 
+              onClick={handleScribeSimulation} 
+              style={{ fontSize: '0.76rem', padding: '0.3rem 0.6rem', display: 'flex', alignItems: 'center', gap: '0.4rem', background: isRecording ? '#ef4444' : undefined, color: isRecording ? 'white' : undefined, border: isRecording ? 'none' : undefined }}
+            >
+              {isRecording ? <Square size={14} /> : <Mic size={14} />}
+              {isRecording ? 'Stop Recording' : 'Start Live Scribe'}
             </button>
           </div>
 

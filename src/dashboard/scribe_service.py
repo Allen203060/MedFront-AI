@@ -77,7 +77,6 @@ def generate_soap_note_from_transcript(
                     {"role": "system", "content": SCRIBE_SYSTEM_PROMPT},
                     {"role": "user", "content": user_prompt},
                 ],
-                temperature=0.1,
                 response_format={"type": "json_object"},
             )
 

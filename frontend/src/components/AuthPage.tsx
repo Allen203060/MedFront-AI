@@ -7,16 +7,18 @@ type Role = 'patient' | 'doctor' | 'admin';
 interface AuthPageProps {
   onLogin: (role: Role, userId: string, userName: string) => void;
   onGuestCall: () => void;
+  initialMode?: 'login' | 'signup';
 }
 
-export const AuthPage: React.FC<AuthPageProps> = ({ onLogin, onGuestCall }) => {
-  const [isLoginMode, setIsLoginMode] = useState(true);
+export const AuthPage: React.FC<AuthPageProps> = ({ onLogin, onGuestCall, initialMode }) => {
+  const [isLoginMode, setIsLoginMode] = useState(initialMode !== 'signup');
   const [role, setRole] = useState<Role>('patient');
   
   // Form fields
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [name, setName] = useState('');
+  const [dob, setDob] = useState('');
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
 
@@ -46,8 +48,8 @@ export const AuthPage: React.FC<AuthPageProps> = ({ onLogin, onGuestCall }) => {
         
       } else {
         // Sign Up Mode
-        if (!name.trim() || !email.trim() || !password.trim()) {
-          setError('Please fill in all fields.');
+        if (!name.trim() || !email.trim() || !password.trim() || (role === 'patient' && !dob.trim())) {
+          setError('Please fill in all fields (including Date of Birth).');
           setLoading(false);
           return;
         }
@@ -61,7 +63,7 @@ export const AuthPage: React.FC<AuthPageProps> = ({ onLogin, onGuestCall }) => {
             const res = await api.registerPatient({
               first_name: fn,
               last_name: ln,
-              date_of_birth: '1990-01-01', // Dummy default for frontend signup
+              date_of_birth: dob,
               phone_number: '+91-99999-99999', // Dummy default
               email: email,
               password: password,
@@ -161,17 +163,31 @@ export const AuthPage: React.FC<AuthPageProps> = ({ onLogin, onGuestCall }) => {
           </h2>
 
           {!isLoginMode && (
-            <div style={{ marginBottom: '1.5rem' }}>
-              <label style={{ display: 'block', marginBottom: '0.5rem', color: 'var(--text-color)', fontWeight: 500 }}>Full Name</label>
-              <input 
-                type="text" 
-                value={name}
-                onChange={(e) => setName(e.target.value)}
-                placeholder="e.g. John Doe"
-                style={{ width: '100%', padding: '0.75rem', borderRadius: '8px', border: '1px solid var(--border-color)', background: 'var(--bg-color)', color: 'var(--text-color)' }}
-                required={!isLoginMode}
-              />
-            </div>
+            <>
+              <div style={{ marginBottom: '1.5rem' }}>
+                <label style={{ display: 'block', marginBottom: '0.5rem', color: 'var(--text-color)', fontWeight: 500 }}>Full Name</label>
+                <input 
+                  type="text" 
+                  value={name}
+                  onChange={(e) => setName(e.target.value)}
+                  placeholder="e.g. John Doe"
+                  style={{ width: '100%', padding: '0.75rem', borderRadius: '8px', border: '1px solid var(--border-color)', background: 'var(--bg-color)', color: 'var(--text-color)' }}
+                  required={!isLoginMode}
+                />
+              </div>
+              {role === 'patient' && (
+                <div style={{ marginBottom: '1.5rem' }}>
+                  <label style={{ display: 'block', marginBottom: '0.5rem', color: 'var(--text-color)', fontWeight: 500 }}>Date of Birth</label>
+                  <input 
+                    type="date" 
+                    value={dob}
+                    onChange={(e) => setDob(e.target.value)}
+                    style={{ width: '100%', padding: '0.75rem', borderRadius: '8px', border: '1px solid var(--border-color)', background: 'var(--bg-color)', color: 'var(--text-color)' }}
+                    required={!isLoginMode}
+                  />
+                </div>
+              )}
+            </>
           )}
 
           <div style={{ marginBottom: '1.5rem' }}>

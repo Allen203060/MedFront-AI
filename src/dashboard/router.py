@@ -260,9 +260,13 @@ async def register_new_patient(req: NewPatientRequest) -> Dict[str, Any]:
         date_of_birth=req.date_of_birth,
     )
     if existing:
+        # Update existing patient with new email and password (linking account)
+        existing.email = req.email or existing.email
+        existing.password = req.password or existing.password
+        db.update_patient_record(existing)
         return {
             "success": True,
-            "message": f"Patient already registered with permanent MRN: {existing.id}",
+            "message": f"Successfully linked to your existing MRN: {existing.id}. Profile updated.",
             "patient": existing.model_dump(),
             "is_new": False,
         }

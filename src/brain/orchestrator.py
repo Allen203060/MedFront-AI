@@ -386,7 +386,6 @@ class AgenticBrainOrchestrator:
                     {"role": "system", "content": PATIENT_INFO_EXTRACTION_PROMPT},
                     {"role": "user", "content": f"[Transcript]:\n{transcript}"}
                 ],
-                temperature=0.0,
                 response_format={"type": "json_object"},
             )
 

@@ -1108,13 +1108,24 @@ class CosmosDatabaseService(DatabaseService):
         appointment_time: str,
         reason_for_visit: str,
     ) -> Tuple[bool, str, Optional[Appointment]]:
-        # Check if slot is already booked (double-booking prevention)
+        # 1. Locate Clinician Schedule
+        schedules = self.get_doctor_schedules(doctor_name, appointment_date)
+        if not schedules:
+            return (
+                False,
+                f"No schedule found for '{doctor_name}' on date '{appointment_date}'.",
+                None,
+            )
+
+        target_schedule = schedules[0]
+
+        # 2. Check if slot is already booked (double-booking prevention)
         query = (
-            "SELECT * FROM c WHERE LOWER(c.doctor_name) = @doc "
+            "SELECT * FROM c WHERE c.doctor_id = @doc_id "
             "AND c.appointment_date = @date AND c.appointment_time = @time AND c.status = 'CONFIRMED'"
         )
         params = [
-            {"name": "@doc", "value": doctor_name.strip().lower()},
+            {"name": "@doc_id", "value": target_schedule.doctor_id},
             {"name": "@date", "value": appointment_date.strip()},
             {"name": "@time", "value": appointment_time.strip()},
         ]
@@ -1134,9 +1145,9 @@ class CosmosDatabaseService(DatabaseService):
         appt = Appointment(
             id=appt_id,
             patient_id=patient_id,
-            doctor_id="DOC-AZ",
-            doctor_name=doctor_name,
-            specialty="Consultation",
+            doctor_id=target_schedule.doctor_id,
+            doctor_name=target_schedule.doctor_name,
+            specialty=target_schedule.specialty,
             appointment_date=appointment_date,
             appointment_time=appointment_time,
             reason_for_visit=reason_for_visit,

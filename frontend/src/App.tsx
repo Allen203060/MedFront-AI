@@ -19,6 +19,7 @@ import { AuthPage } from './components/AuthPage';
 
 export function App() {
   const [showGuestVoice, setShowGuestVoice] = useState(false);
+  const [initialAuthMode, setInitialAuthMode] = useState<'login' | 'signup'>('login');
   const [currentUser, setCurrentUser] = useState<{ id: string, name: string } | null>(null);
   const [currentRole, setCurrentRole] = useState<'patient' | 'doctor' | 'admin' | null>(null);
   const [activeTab, setActiveTab] = useState<'doctor' | 'receptionist' | 'patients' | 'voice'>('doctor');
@@ -90,10 +91,15 @@ export function App() {
                  handleLogin('patient', id, name);
               }}
            />
-           <div style={{ textAlign: 'center', marginTop: '2rem' }}>
-              <button className="btn-secondary" onClick={() => setShowGuestVoice(false)}>
+           <div style={{ textAlign: 'center', marginTop: '2rem', display: 'flex', gap: '1rem', justifyContent: 'center' }}>
+              <button className="btn-secondary" onClick={() => { setInitialAuthMode('login'); setShowGuestVoice(false); }}>
                 {currentUser ? 'Go to Patient Dashboard' : 'Back to Login'}
               </button>
+              {!currentUser && (
+                 <button className="btn-primary" style={{background: 'var(--brand-primary)', color: 'white', padding: '0.5rem 1rem', borderRadius: '6px', border: 'none', cursor: 'pointer', fontWeight: 600}} onClick={() => { setInitialAuthMode('signup'); setShowGuestVoice(false); }}>
+                   Complete Registration (Sign Up)
+                 </button>
+              )}
            </div>
         </main>
       </div>
@@ -101,7 +107,7 @@ export function App() {
   }
 
   if (!currentUser || !currentRole) {
-    return <AuthPage onLogin={handleLogin} onGuestCall={() => setShowGuestVoice(true)} />;
+    return <AuthPage initialMode={initialAuthMode} onLogin={handleLogin} onGuestCall={() => setShowGuestVoice(true)} />;
   }
 
   if (currentRole === 'patient') {

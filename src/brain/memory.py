@@ -26,13 +26,16 @@ class ConversationMemory:
         self.pending_time: Optional[str] = None
         self.active_intent: IntentCategory = IntentCategory.CASUAL_CONVERSATION
         self.language: str = "English"
+        self.language_locked: bool = False
 
     def detect_and_update_language(self, text: str) -> str:
         """
-        Detects Hindi, Punjabi, or English from caller input and dynamically maintains language state.
-        Allows fluid turn-by-turn code-switching: if user switches from Hindi to English, it immediately
-        switches to English. Short neutral replies (e.g. times, numbers, doctor names) retain previous language.
+        Detects Hindi, Punjabi, or English from caller input.
+        Once the language is detected on the first turn, it locks and does not change.
         """
+        if self.language_locked:
+            return self.language
+            
         lower = text.lower().strip()
         words = [w.strip(".,!?;:'\"") for w in lower.split()]
         word_set = set(words)
@@ -177,6 +180,7 @@ class ConversationMemory:
     def add_user_message(self, text: str) -> None:
         """Appends a user input turn to memory."""
         self.messages.append({"role": "user", "content": text})
+        self.language_locked = True
 
     def add_assistant_message(self, text: str) -> None:
         """Appends an assistant output turn to memory."""
