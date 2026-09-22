@@ -4,8 +4,12 @@ Coordinates Intent Classification, RAG Retrieval, Tool Action Execution,
 and Output Generation natively on Azure OpenAI (GPT-4o).
 """
 
+from src.brain.azure_client import get_azure_openai_client
+from src.core.config import settings
 import json
+import logging
 import os
+import re
 import warnings
 from typing import Optional, Dict, Any
 from dotenv import load_dotenv
