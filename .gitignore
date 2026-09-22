@@ -34,3 +34,14 @@ htmlcov/
 # Graft Code Context Layer Cache
 graft/
 node_modules/
+
+# Node & Build Artifacts
+node_modules/
+*.egg-info/
+dist/
+build/
+
+# Internal Project Notes & Documentation
+CHALLENGES.md
+SOUL.md
+
