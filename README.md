@@ -181,16 +181,30 @@ python -c "from src.brain.orchestrator import AgenticBrainOrchestrator; print('O
 
 ---
 
-## Modular Development Progression
+## Application Features & Functionality
 
-To avoid tangled dependencies, follow the isolated module path:
+### 🎙️ 1. Full-Duplex AI Voice Receptionist ("Aura")
+- **Real-Time Phone Automation:** PSTN inbound and outbound call streaming over WebSockets using Azure Communication Services.
+- **True Audio Barge-In:** Continuous speech recognition (STT) during audio playback that instantly purges neural TTS output buffers when the caller speaks.
+- **Multilingual Support:** Dynamic language detection and switching across **English**, **Hindi**, and **Punjabi**.
+- **Low-Latency Fast-Path:** Sub-50ms instant response path for common conversational greetings.
 
-1. **Module 1 (Telephony):** Answer inbound call $\to$ play static `.wav` greeting $\to$ hang up.
-2. **Module 2 (Speech Pipeline):** Offline `.wav` transcription (STT) and text synthesis (TTS).
-3. **Module 3 (Brain):** Interactive terminal chat loop with GPT-4o and persona prompts.
-4. **Module 4 (Scoped RAG):** Dual-index search with strict OData `patient_id` filters.
-5. **Module 5 (Actions):** Deterministic Cosmos DB lookups and appointment booking tools.
-6. **The Merger:** Assemble modules into the low-latency full-duplex WebSocket loop.
+### 📅 2. Automated Appointment Management & Triage
+- **Deterministic Scheduling:** Real-time doctor availability lookup, appointment booking, rescheduling, and cancellations backed by Azure Cosmos DB.
+- **Patient Identity Verification:** Multi-factor identity resolution (`last_name`, `dob`, `phone_number`) before accessing or modifying patient schedules.
+- **Emergency Triage Escalation:** Instant detection of critical emergency keywords with automatic safety protocols and clinic transfer recommendations.
+
+### 🔍 3. Scoped Clinical RAG & Knowledge Search
+- **Hybrid Vector Retrieval:** Azure AI Search integration over clinic policies, FAQs, and medical documentation using hybrid semantic vectors.
+- **Zero Cross-Patient Leakage:** Enforced OData partition filtering (`patient_id eq '{id}'`) guaranteeing patient data boundary isolation.
+
+### 🩺 4. Doctor Copilot & Ambient Scribe Dashboard
+- **Clinician Web Dashboard:** Real-time portal for doctors featuring live patient queues, consultation summaries, and medical history timeline.
+- **Ambient Clinical Scribe:** Automated speech-to-text transcript analysis and SOAP note generation powered by GPT-4o.
+
+### 🔒 5. Enterprise Security & Architecture
+- **Zero-Trust Identity:** Native integration with Azure Managed Identity (`DefaultAzureCredential`) eliminating hardcoded credentials in production.
+- **Dual-Persona RBAC:** Rigid operational boundaries separating administrative Receptionist AI capabilities from clinical Doctor Copilot functions.
 
 ---
 
