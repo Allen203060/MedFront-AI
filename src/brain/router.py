@@ -1,79 +1,70 @@
 """
 LLM-Driven Intent Router for MedFront-AI Agentic Brain.
-Classifies user intent, determines routing targets (RAG vs Tools), and extracts parameters.
+Classifies user intent and routing targets using Azure OpenAI with strict JSON output.
 """
-from google.genai import types
 
 import json
-import os
-from dotenv import load_dotenv
-from google import genai
+import logging
+from src.core.config import settings
+from src.brain.azure_client import get_azure_openai_client
 from src.brain.memory import ConversationMemory
 from src.brain.models import IntentDecision
 from src.brain.prompts import ROUTER_SYSTEM_PROMPT
 from src.brain.taxonomy import IntentCategory, ToolName
 
-load_dotenv()
+logger = logging.getLogger("medfront.brain.router")
 
 
 class IntentRouter:
     """
-    Analyzes user turn + conversation context using Google Gemini to produce an IntentDecision.
+    Analyzes user turn + conversation context using Azure OpenAI to produce an IntentDecision.
     """
 
     def __init__(self) -> None:
-        self.api_key = os.getenv("GEMINI_API_KEY")
-        self.model_name = os.getenv("GEMINI_MODEL_NAME", "gemini-3.6-flash")
-
-        if not self.api_key:
-            raise ValueError("Missing GEMINI_API_KEY in environment variables.")
-
-        self.client = genai.Client(api_key=self.api_key)
+        self.deployment_name = settings.azure_openai_deployment_name
+        self.client = get_azure_openai_client()
 
     def classify_intent(self, memory: ConversationMemory, current_text: str) -> IntentDecision:
         """
         Analyzes the latest user message + memory transcript and returns a structured IntentDecision.
         """
-        # Format recent transcript context for multi-turn awareness
         transcript = memory.get_formatted_transcript(max_turns=6)
+        from datetime import date
+        today_str = date.today().strftime("%Y-%m-%d (%A)")
         
-        prompt = (
-            f"{ROUTER_SYSTEM_PROMPT}\n\n"
-            f"[Conversation History]:\n{transcript}\n"
-            f"[Current Patient Input]: {current_text}\n\n"
-            f"Output JSON:"
+        user_prompt = (
+            f"[Current Reference Date]: {today_str}\n"
+            f"[Conversation History]:\n{transcript}\n\n"
+            f"[Current Patient Input]: {current_text}"
         )
 
-        try:
-            response = self.client.models.generate_content(
-                model=self.model_name,
-                contents=prompt,
-                config=types.GenerateContentConfig(
-                    temperature=0.1,  # Low temperature for deterministic intent classification
-                )
+        if not self.client:
+            logger.warning("Azure OpenAI unconfigured. Defaulting to CASUAL_CONVERSATION.")
+            return IntentDecision(
+                intent=IntentCategory.CASUAL_CONVERSATION,
+                confidence=1.0,
+                reasoning="Offline default"
             )
 
-            raw_text = response.text.strip() if response.text else "{}"
+        try:
+            response = self.client.chat.completions.create(
+                model=self.deployment_name,
+                messages=[
+                    {"role": "system", "content": ROUTER_SYSTEM_PROMPT},
+                    {"role": "user", "content": user_prompt},
+                ],
+                response_format={"type": "json_object"},
+            )
 
-            # Clean markdown code blocks if present
-            if raw_text.startswith("```json"):
-                raw_text = raw_text.replace("```json", "").replace("```", "").strip()
-            elif raw_text.startswith("```"):
-                raw_text = raw_text.replace("```", "").strip()
-
+            raw_text = response.choices[0].message.content.strip()
             data = json.loads(raw_text)
 
-            # Map intent string to Enum safely
-           # Replace lines 61-67 with:
             raw_intent = str(data.get("intent", "CASUAL_CONVERSATION")).strip().replace(" ", "_").upper()
-
             try:
                 intent_enum = IntentCategory(raw_intent)
             except ValueError:
                 intent_enum = IntentCategory.CASUAL_CONVERSATION
 
-
-            # Map tool name safely
             raw_tool = data.get("tool_name")
             tool_enum = None
             if raw_tool:
@@ -93,7 +84,7 @@ class IntentRouter:
             )
 
         except Exception as e:
-            # Fallback defensively if LLM output fails to parse
+            logger.error(f"Intent classification failed: {e}")
             return IntentDecision(
                 intent=IntentCategory.CASUAL_CONVERSATION,
                 confidence=0.5,

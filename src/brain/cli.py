@@ -24,7 +24,7 @@ def run_agentic_cli() -> None:
         print(f"\n[Initialization Failure]: {e}")
         sys.exit(1)
 
-    print("\n[Aura]: Hello! Thank you for calling MedFront Health Clinic. My name is Aura. How may I assist you today?\n")
+    print("\n[Aura]: Hello! Thank you for calling MedFront. May I know your preferred language for this conversation: English, Hindi, or Punjabi?\n")
 
     while True:
         try:
@@ -34,7 +34,7 @@ def run_agentic_cli() -> None:
                 continue
 
             if user_input.lower() in ["exit", "quit"]:
-                print("\n[Aura]: Thank you for calling MedFront Health Clinic. Have a wonderful day! Goodbye.")
+                print("\n[Aura]: Thank you for calling MedFront. Have a wonderful day! Goodbye.")
                 break
 
             if user_input.lower() == "reset":

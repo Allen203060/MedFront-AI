@@ -8,11 +8,11 @@ trigger: always_on
 
 ---
 
-## 1. Strict Non-Autonomous & Guided Development
-* **Strict Non-Autonomous Mode:** You are NOT authorized to create, modify, or delete any project files, documentation (`SOUL.md`, `CHALLENGES.md`, `theory_concepts/`), or execute terminal commands/scripts autonomously.
-* **Task Assignment & Location Guidance:** Break down work into clear, manageable tasks. Always provide complete, production-ready code (no lazy pseudo-code or unexplained ellipses) and specify the exact file paths and locations where the user should write or modify the code.
-* **Line-by-Line & Intent Breakdown:** For every code snippet or change, explain it line-by-line. Clearly detail the exact intent and rationale behind each step so the user understands why a particular design choice or line of code is needed.
-* **Interactive Collaboration:** Present tasks, explain the mechanics, wait for the user to write code and execute commands, and provide verification steps.
+## 1. Autonomous Execution & Comprehensive Change Breakdown
+* **Autonomous Execution:** Autonomously create, modify, or update project files, documentation (`SOUL.md`, `CHALLENGES.md`, `theory_concepts/`), and configurations required to complete tasks. Do not wait for manual user copy-pasting when direct edits can be performed cleanly.
+* **Transparent Location Reporting:** Explicitly specify the exact file paths and locations where changes were made so the user can easily inspect and track every modification.
+* **Intent & Rationale Breakdown ("Why & What"):** After making changes, explain thoroughly *why* you did what you did (the architectural intent, design decisions, and engineering trade-offs) and *what* was changed (line-by-line or block-by-block breakdown of key mechanics).
+* **Verification & Next Steps:** Validate changes where possible and provide clear verification steps or next actions for the user.
 
 ---
 
@@ -58,7 +58,11 @@ Whenever a new feature is implemented or a bug is diagnosed, strictly adhere to 
   * **Backend & Transport:** Python (FastAPI, `asyncio`), WebSockets for real-time PCM audio streaming.
   * **Orchestration Frameworks:** LangChain, LangGraph, and LangSmith for complex multi-turn and multi-persona workflows.
   * **Security & Compliance:** Azure Managed Identities (`DefaultAzureCredential`), zero hardcoded secrets, HIPAA-compliant audit logging.
-* **Documentation Retrieval Requirement:** Whenever designing or implementing features involving LangChain, LangGraph, or cloud services, query available MCP tools (such as `docs-langchain` and `google-developer-knowledge`) to pull the latest SDK specifications and best practices before drafting code.
+* **Azure MCP Server & Documentation Retrieval Directive:**
+  * **Mandatory Azure MCP Usage:** Whenever creating, configuring, diagnosing, or writing code for Azure services (Azure Communication Services, Azure AI Speech, Azure OpenAI, Azure AI Search, Cosmos DB, etc.), you must actively query the `azure-mcp` server tools.
+  * **Documentation Retrieval:** Always use the `documentation` tool from `azure-mcp` to pull official Azure SDK specifications, API signatures, and code samples before generating implementation code. Never guess SDK parameters or method signatures.
+  * **Best Practices & Validation:** Use `get_azure_bestpractices` and service-specific tools (e.g., `speech`, `search`, `cosmos`, `arm`, `bicepschema`) to validate resource configurations, HIPAA compliance directives, and low-latency architectural patterns.
+  * **Multi-Framework Retrieval:** For LangChain/LangGraph integrations, complement `azure-mcp` with `docs-langchain` and `google-developer-knowledge`.
 
 ---
 

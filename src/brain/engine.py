@@ -1,76 +1,62 @@
-import os
-from typing import Optional
-from dotenv import load_dotenv
-from google import genai
-from google.genai import types
+"""
+Conversation Engine for MedFront-AI.
+Manages multi-turn conversation state using Azure OpenAI Service (GPT-4o).
+"""
+
+import logging
+from typing import List, Dict
+from src.core.config import settings
+from src.brain.azure_client import get_azure_openai_client
 from src.brain.prompts import RECEPTIONIST_SYSTEM_PROMPT
 
-# Load environment variables from .env file
-load_dotenv()
+logger = logging.getLogger("medfront.brain.engine")
 
 
 class ConversationEngine:
     """
-    Manages multi-turn conversation state and Google Gemini API interactions.
+    Manages multi-turn conversation state using Azure OpenAI.
     """
 
     def __init__(self, system_prompt: str = RECEPTIONIST_SYSTEM_PROMPT) -> None:
-        """
-        Initializes the Google GenAI client and creates a multi-turn chat session.
-        """
-        self.api_key = os.getenv("GEMINI_API_KEY")
-# Change line 22 to:
-        self.model_name = os.getenv("GEMINI_MODEL_NAME", "gemini-3.6-flash")
         self.system_prompt = system_prompt
+        self.deployment_name = settings.azure_openai_deployment_name
+        self.client = get_azure_openai_client()
 
-        # Validate API key presence
-        if not self.api_key:
-            raise ValueError(
-                "Missing GEMINI_API_KEY in environment variables. "
-                "Please add GEMINI_API_KEY to your .env file."
-            )
+        if not self.client:
+            logger.warning("ConversationEngine running in mock mode: Azure OpenAI credentials not set.")
 
-        # 1. Initialize Google GenAI Client
-        self.client = genai.Client(api_key=self.api_key)
-
-        # 2. Configure Chat Options with System Instruction
-        self.config = types.GenerateContentConfig(
-            system_instruction=self.system_prompt,
-            temperature=0.7,
-            max_output_tokens=300,
-        )
-
-        # 3. Create the multi-turn Chat Session
-        self.chat = self.client.chats.create(
-            model=self.model_name,
-            config=self.config
-        )
+        self.messages: List[Dict[str, str]] = [
+            {"role": "system", "content": self.system_prompt}
+        ]
 
     def process_message(self, user_text: str) -> str:
         """
-        Sends user text to the Gemini chat session and returns the assistant's response.
+        Sends user text to Azure OpenAI and appends turn to message history.
         """
         clean_text = user_text.strip()
         if not clean_text:
             return "I didn't catch that. Could you please repeat?"
 
+        self.messages.append({"role": "user", "content": clean_text})
+
+        if not self.client:
+            reply = f"[Offline Mode] Thank you for calling MedFront Clinic. You said: '{clean_text}'."
+            self.messages.append({"role": "assistant", "content": reply})
+            return reply
+
         try:
-            # Send message to active chat session (history is managed automatically by Gemini SDK)
-            response = self.chat.send_message(clean_text)
-            
-            # Extract text from response payload
-            assistant_response = response.text if response.text else ""
+            response = self.client.chat.completions.create(
+                model=self.deployment_name,
+                messages=self.messages,
+            )
+            assistant_response = response.choices[0].message.content.strip()
+            self.messages.append({"role": "assistant", "content": assistant_response})
             return assistant_response
 
         except Exception as e:
-            # Handle API timeouts, rate limits, or connectivity issues gracefully
+            logger.error(f"Azure OpenAI Error in process_message: {e}")
             return f"Error communicating with AI engine: {str(e)}"
 
     def reset_conversation(self) -> None:
-        """
-        Resets the conversation session, clearing all previous turn memory.
-        """
-        self.chat = self.client.chats.create(
-            model=self.model_name,
-            config=self.config
-        )
+        """Clears conversation history and restores the base system prompt."""
+        self.messages = [{"role": "system", "content": self.system_prompt}]

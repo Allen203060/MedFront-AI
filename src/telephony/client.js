@@ -1,0 +1,1 @@
+import { CallClient } from '@azure/communication-calling'; import { AzureCommunicationTokenCredential } from '@azure/communication-common'; window.CallClient = CallClient; window.AzureCommunicationTokenCredential = AzureCommunicationTokenCredential;

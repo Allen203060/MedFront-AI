@@ -1,0 +1,68 @@
+[
+  {
+    "id": "REC-001",
+    "patient_id": "P-10023",
+    "patient_name": "Aarav Sharma",
+    "dob": "1985-04-12",
+    "record_type": "soap_note",
+    "timestamp": "2025-08-10T14:30:00Z",
+    "author": "Dr. Ananya Rao, MD",
+    "access_level": "clinical",
+    "content": "SOAP NOTE - Encounter Date: 2025-08-10. Subjective: 40-year-old male presents for 6-month hypertension follow-up. Reports mild occasional headaches after long work hours. Compliant with prescribed Lisinopril. Objective: BP 138/88 mmHg, HR 72 bpm, SpO2 98% on room air. BMI 26.8. Assessment: Essential hypertension, suboptimally controlled; Stage 1. Plan: Increase Lisinopril from 10mg daily to 20mg daily orally after breakfast. Advise low sodium DASH diet. Order basic metabolic panel (BMP) and serum creatinine check in 4 weeks. Review in Cardiology OPD with Dr. Ananya Rao in 6 weeks."
+  },
+  {
+    "id": "REC-002",
+    "patient_id": "P-10023",
+    "patient_name": "Aarav Sharma",
+    "dob": "1985-04-12",
+    "record_type": "call_transcript",
+    "timestamp": "2025-09-02T10:15:00Z",
+    "author": "Receptionist AI (Aura)",
+    "access_level": "administrative",
+    "content": "PHONE CALL TRANSCRIPT - Date: 2025-09-02. Caller verified as Aarav Sharma (DOB 1985-04-12). Patient inquired regarding overnight fasting requirements for fasting blood glucose and lipid panel scheduled at the clinic diagnostic lab on Friday. Receptionist advised patient to fast for 10-12 hours prior to sample collection, plain water allowed. Confirmed patient insurance is Star Health Comprehensive policy."
+  },
+  {
+    "id": "REC-003",
+    "patient_id": "P-10023",
+    "patient_name": "Aarav Sharma",
+    "dob": "1985-04-12",
+    "record_type": "lab_result",
+    "timestamp": "2025-09-06T09:00:00Z",
+    "author": "MedFront Diagnostic Labs / Dr. Ananya Rao, MD",
+    "access_level": "clinical",
+    "content": "LABORATORY REPORT - Patient: Aarav Sharma. Specimen Date: 2025-09-05. Basic Metabolic Panel: Serum Sodium: 140 mEq/L (Normal 135-145). Serum Potassium: 4.3 mEq/L (Normal 3.5-5.0). BUN: 16 mg/dL (Normal 7-20). Serum Creatinine: 1.0 mg/dL (Normal 0.7-1.3). eGFR: >60 mL/min/1.73m2. Fasting Blood Glucose: 94 mg/dL (Normal 70-99). Doctor Impression: Renal function and serum electrolytes remain normal and stable on increased Lisinopril 20mg."
+  },
+  {
+    "id": "REC-004",
+    "patient_id": "P-10024",
+    "patient_name": "Priya Patel",
+    "dob": "1985-11-22",
+    "record_type": "soap_note",
+    "timestamp": "2025-07-15T11:00:00Z",
+    "author": "Dr. Rajesh Iyer, MD",
+    "access_level": "clinical",
+    "content": "SOAP NOTE - Encounter Date: 2025-07-15. Subjective: 39-year-old female presents with seasonal allergic rhinitis, frequent sneezing, nasal congestion, and itchy watery eyes. Severe drug allergy to Penicillin / Amoxicillin (causes acute urticaria and anaphylaxis). Objective: Vital signs stable, afebrile. HEENT: Swollen nasal turbinates with clear watery discharge. Assessment: Moderate allergic rhinitis. Plan: Start Fluticasone propionate nasal spray 50mcg, 2 sprays per nostril once daily morning. Tab Cetirizine 10mg at night as needed. Critical allergy to Penicillin reaffirmed in medical chart."
+  },
+  {
+    "id": "REC-005",
+    "patient_id": "P-10024",
+    "patient_name": "Priya Patel",
+    "dob": "1985-11-22",
+    "record_type": "call_transcript",
+    "timestamp": "2025-08-01T15:45:00Z",
+    "author": "Receptionist AI (Aura)",
+    "access_level": "administrative",
+    "content": "PHONE CALL TRANSCRIPT - Date: 2025-08-01. Caller verified as Priya Patel (DOB 1985-11-22). Patient called to request refill approval for Fluticasone nasal spray sent to MedPlus Pharmacy Koramangala. Receptionist routed refill request to Dr. Rajesh Iyer. Patient cashless insurance confirmed under HDFC ERGO Health."
+  },
+  {
+    "id": "REC-006",
+    "patient_id": "P-10025",
+    "patient_name": "Vikram Malhotra",
+    "dob": "1978-07-05",
+    "record_type": "soap_note",
+    "timestamp": "2025-08-20T11:00:00Z",
+    "author": "Dr. Rajesh Iyer, MD",
+    "access_level": "clinical",
+    "content": "SOAP NOTE - Encounter Date: 2025-08-20. Subjective: 47-year-old male established patient presents for quarterly Type 2 Diabetes Mellitus checkup. Regularly taking Metformin 500mg twice daily with meals. No hypoglycemia reported. Objective: BP 126/82 mmHg. HbA1c: 6.8% (Well controlled). Plan: Continue Metformin 500mg BID. Advise 30-minute daily brisk walking. Schedule annual ophthalmology retinal screening and lipid profile in 6 months."
+  }
+]
