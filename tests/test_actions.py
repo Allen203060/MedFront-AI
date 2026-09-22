@@ -32,7 +32,7 @@ def target_test_date():
 
 def test_openai_tool_schemas_validity():
     """Ensure all registered tools have valid OpenAI function schemas."""
-    assert len(HEALTHCARE_TOOLS) == 5
+    assert len(HEALTHCARE_TOOLS) == 8
     tool_names = [t["function"]["name"] for t in HEALTHCARE_TOOLS]
     expected = [
         "verify_patient_identity",
@@ -40,6 +40,9 @@ def test_openai_tool_schemas_validity():
         "book_appointment",
         "cancel_appointment",
         "get_patient_appointments",
+        "update_patient_details",
+        "get_patient_test_reports",
+        "get_patient_visit_summaries",
     ]
     assert sorted(tool_names) == sorted(expected)
 

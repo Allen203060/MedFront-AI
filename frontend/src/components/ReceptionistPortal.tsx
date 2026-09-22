@@ -92,6 +92,7 @@ export const ReceptionistPortal: React.FC<ReceptionistPortalProps> = ({
   };
 
   const filteredAppointments = appointments.filter((a) => {
+    if (a.status === 'CANCELLED') return false;
     const q = searchQuery.toLowerCase();
     return (
       (a.patient_name || '').toLowerCase().includes(q) ||

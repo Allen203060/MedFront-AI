@@ -1,5 +1,5 @@
 """
-Ambient AI Clinical Scribe Service for MedFront / AuraCare.
+Ambient AI Clinical Scribe Service for MedFront / MedFront.
 Transforms ambient clinical consultations or clinician dictations into structured
 SOAP notes (Subjective, Objective, Assessment, Plan) with explicit doctor approval gating.
 """
@@ -77,7 +77,6 @@ def generate_soap_note_from_transcript(
                     {"role": "system", "content": SCRIBE_SYSTEM_PROMPT},
                     {"role": "user", "content": user_prompt},
                 ],
-                temperature=0.1,
                 response_format={"type": "json_object"},
             )
 

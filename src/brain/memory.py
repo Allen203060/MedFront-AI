@@ -26,13 +26,16 @@ class ConversationMemory:
         self.pending_time: Optional[str] = None
         self.active_intent: IntentCategory = IntentCategory.CASUAL_CONVERSATION
         self.language: str = "English"
+        self.language_locked: bool = False
 
     def detect_and_update_language(self, text: str) -> str:
         """
-        Detects Hindi, Punjabi, or English from caller input and dynamically maintains language state.
-        Allows fluid turn-by-turn code-switching: if user switches from Hindi to English, it immediately
-        switches to English. Short neutral replies (e.g. times, numbers, doctor names) retain previous language.
+        Detects Hindi, Punjabi, or English from caller input.
+        Once the language is detected on the first turn, it locks and does not change.
         """
+        if self.language_locked:
+            return self.language
+            
         lower = text.lower().strip()
         words = [w.strip(".,!?;:'\"") for w in lower.split()]
         word_set = set(words)
@@ -116,9 +119,16 @@ class ConversationMemory:
         else:
             # Ongoing session is Hindi or Punjabi:
             if has_devanagari and not has_gurmukhi:
+                matched_hindi = [w for w in indic_words if w in hindi_script_markers]
+                if len(indic_words) <= 2 and not matched_hindi:
+                    return self.language
                 self.language = "Hindi"
                 return self.language
-            if has_gurmukhi:
+
+            if has_gurmukhi and not has_devanagari:
+                matched_punjabi = [w for w in indic_words if w in punjabi_script_markers]
+                if len(indic_words) <= 2 and not matched_punjabi:
+                    return self.language
                 self.language = "Punjabi"
                 return self.language
 
@@ -170,6 +180,7 @@ class ConversationMemory:
     def add_user_message(self, text: str) -> None:
         """Appends a user input turn to memory."""
         self.messages.append({"role": "user", "content": text})
+        self.language_locked = True
 
     def add_assistant_message(self, text: str) -> None:
         """Appends an assistant output turn to memory."""

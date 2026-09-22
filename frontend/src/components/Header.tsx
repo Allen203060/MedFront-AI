@@ -17,7 +17,7 @@ export const Header: React.FC<HeaderProps> = ({ stats, darkMode, onToggleTheme }
           <Activity size={24} />
         </div>
         <div>
-          <div className="brand-title">MedFront AI Health Clinic</div>
+          <div className="brand-title">MedFront</div>
           <div className="brand-sub">Enterprise Azure Voice AI & Clinical Ambient Intelligence</div>
         </div>
       </div>

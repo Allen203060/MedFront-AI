@@ -8,6 +8,7 @@ export function useVoiceConsole(onAppointmentBooked?: () => void) {
   const [messages, setMessages] = useState<VoiceMessage[]>([]);
   const [interimText, setInterimText] = useState('');
   const [isAgentSpeaking, setIsAgentSpeaking] = useState(false);
+  const [isMuted, setIsMuted] = useState(false);
   const [recognizedPatient, setRecognizedPatient] = useState<RecognizedPatient | null>(null);
 
   const wsRef = useRef<WebSocket | null>(null);
@@ -28,6 +29,19 @@ export function useVoiceConsole(onAppointmentBooked?: () => void) {
       currentSourceRef.current = null;
     }
     setIsAgentSpeaking(false);
+  }, []);
+
+  const toggleMute = useCallback(() => {
+    setIsMuted(prev => {
+      const next = !prev;
+      if (micStreamRef.current) {
+        const audioTrack = micStreamRef.current.getAudioTracks()[0];
+        if (audioTrack) {
+          audioTrack.enabled = !next;
+        }
+      }
+      return next;
+    });
   }, []);
 
   const endCall = useCallback(() => {
@@ -60,6 +74,7 @@ export function useVoiceConsole(onAppointmentBooked?: () => void) {
     setStatus('Call ended. Ready to reconnect.');
     setInterimText('');
     setRecognizedPatient(null);
+    setIsMuted(false);
   }, [stopPlayback]);
 
   const playAudioChunk = useCallback(
@@ -261,26 +276,8 @@ export function useVoiceConsole(onAppointmentBooked?: () => void) {
           if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) return;
           const inputData = evt.inputBuffer.getChannelData(0);
 
-          // --- ZERO-LATENCY CLIENT-SIDE RMS BARGE-IN VAD ---
-          if (currentSourceRef.current) {
-            let sumSquares = 0;
-            for (let i = 0; i < inputData.length; i++) {
-              sumSquares += inputData[i] * inputData[i];
-            }
-            const rms = Math.sqrt(sumSquares / inputData.length);
-
-            // If voice energy crosses threshold while agent is speaking, cut audio instantly
-            if (rms > 0.035) {
-              stopPlayback();
-              try {
-                wsRef.current.send(
-                  JSON.stringify({ event: 'client_barge_in', type: 'interrupt' })
-                );
-              } catch {
-                // Ignored
-              }
-            }
-          }
+          // Send continuous 16kHz PCM stream to the backend
+          // (Barge-in will now rely exclusively on the server's semantic 'interim' transcription events)
 
           const downsampled = downsampleTo16kHz(inputData, ctx.sampleRate);
           const pcm16 = floatTo16BitPCM(downsampled);
@@ -328,6 +325,8 @@ export function useVoiceConsole(onAppointmentBooked?: () => void) {
     isAgentSpeaking,
     recognizedPatient,
     analyser: analyserRef.current,
+    isMuted,
+    toggleMute,
     startCall,
     endCall,
     sendTextMessage,

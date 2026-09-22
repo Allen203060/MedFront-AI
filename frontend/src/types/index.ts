@@ -38,6 +38,32 @@ export interface PatientRecord {
   medications?: string[];
   insurance_provider?: string;
   policy_number?: string;
+  address?: string;
+}
+
+export interface TestReport {
+  id: string;
+  patient_id: string;
+  patient_name: string;
+  test_name: string;
+  test_date: string;
+  result_summary: string;
+  doctor_id: string;
+  doctor_name: string;
+  status: string;
+  created_at?: string;
+}
+
+export interface VisitSummary {
+  id: string;
+  patient_id: string;
+  doctor_name: string;
+  visit_date: string;
+  reason_for_visit: string;
+  diagnosis: string;
+  prescriptions: string[];
+  follow_up_instructions: string;
+  created_at?: string;
 }
 
 export interface SoapNote {

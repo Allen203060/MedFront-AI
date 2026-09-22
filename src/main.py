@@ -1,5 +1,5 @@
 """
-AuraCare Main FastAPI Application Entrypoint.
+MedFront Main FastAPI Application Entrypoint.
 Registers routers for isolated modules and provides health check endpoints.
 """
 
@@ -17,7 +17,7 @@ logging.basicConfig(
 )
 
 app = FastAPI(
-    title="MedFront / AuraCare Voice AI Platform",
+    title="MedFront / MedFront Voice AI Platform",
     version="0.1.0",
     description="Enterprise Healthcare Voice AI Receptionist on Microsoft Azure",
 )

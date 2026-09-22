@@ -77,7 +77,7 @@ class AgenticBrainOrchestrator:
             elif self.memory.language == "Punjabi":
                 fast_reply = "ਸਤਿ ਸ਼੍ਰੀ ਅਕਾਲ! ਮੈਡਫਰੰਟ ਹੈਲਥ ਕਲੀਨਿਕ ਵਿੱਚ ਤੁਹਾਡਾ ਸਵਾਗਤ ਹੈ। ਮੈਂ ਔਰਾ ਹਾਂ। ਅੱਜ ਮੈਂ ਤੁਹਾਡੀ ਕੀ ਮਦਦ ਕਰ ਸਕਦੀ ਹਾਂ?"
             else:
-                fast_reply = "Hello! Welcome to MedFront Health Clinic. My name is Aura. How may I assist you with your appointment today?"
+                fast_reply = "Hello! Thank you for calling MedFront. May I know your preferred language for this conversation: English, Hindi, or Punjabi?"
 
             self.memory.add_assistant_message(fast_reply)
             return BrainOutput(
@@ -196,9 +196,7 @@ class AgenticBrainOrchestrator:
                 messages=[
                     {"role": "system", "content": system_instruction},
                     {"role": "user", "content": user_content}
-                ],
-                temperature=temperature,
-                max_tokens=100,  # Strict cap for fast spoken responses (1-2 sentences)
+                ]
             )
             content = res.choices[0].message.content or ""
             return content.strip()
@@ -353,18 +351,18 @@ class AgenticBrainOrchestrator:
                 if sug_doc or sug_date:
                     self.memory.update_session(pending_doctor=sug_doc, pending_date=sug_date)
 
-        if not tool_res.success:
-            user_prompt = (
-                f"[Tool Execution Notification]: The action '{tool_name.value}' could not be completed because: {tool_res.user_message or tool_res.error_message}\n\n"
-                f"[Conversation History]:\n{self.memory.get_formatted_transcript()}\n\n"
-                f"As Aura the receptionist, explain this politely and guide the caller on the next step in 1-2 spoken sentences:{self._get_language_instruction()}"
-            )
-            reply = self._generate_llm_response(RECEPTIONIST_SYSTEM_PROMPT, user_prompt)
-            return (reply, tool_name.value)
-
         # Low-latency optimization: if in English and tool returned a direct spoken message, return it directly!
         if self.memory.language == "English" and tool_res.user_message:
             return (tool_res.user_message, tool_name.value)
+
+        if not tool_res.success:
+            user_prompt = (
+                f"[Backend Tool Message to Caller]: {tool_res.user_message or tool_res.error_message}\n\n"
+                f"[Conversation History]:\n{self.memory.get_formatted_transcript()}\n\n"
+                f"As Aura the receptionist, you MUST convey the exact meaning of the backend message above to the caller in 1-2 spoken sentences.{self._get_language_instruction()} Do not invent details or say you are completing the action."
+            )
+            reply = self._generate_llm_response(RECEPTIONIST_SYSTEM_PROMPT, user_prompt)
+            return (reply, tool_name.value)
 
         user_prompt = (
             f"[Backend Tool Execution Result]: {tool_res.user_message}\n\n"
@@ -388,7 +386,6 @@ class AgenticBrainOrchestrator:
                     {"role": "system", "content": PATIENT_INFO_EXTRACTION_PROMPT},
                     {"role": "user", "content": f"[Transcript]:\n{transcript}"}
                 ],
-                temperature=0.0,
                 response_format={"type": "json_object"},
             )
 

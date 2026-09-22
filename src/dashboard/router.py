@@ -35,6 +35,11 @@ class VerifyRequest(BaseModel):
     date_of_birth: str
     phone_number: Optional[str] = None
 
+class LoginRequest(BaseModel):
+    email: str
+    password: str
+    role: str
+
 
 class DirectBookingRequest(BaseModel):
     patient_id: str
@@ -69,6 +74,54 @@ class ScribeConfirmRequest(BaseModel):
     raw_transcript: Optional[str] = None
     status: Optional[str] = "CONFIRMED_BY_DOCTOR"
 
+
+# =============================================================================
+# AUTHENTICATION
+# =============================================================================
+
+@router.post("/api/auth/login")
+async def login(req: LoginRequest) -> Dict[str, Any]:
+    """Explicit credential verification and role assignment."""
+    db = get_db_service()
+    
+    if req.role == "patient":
+        patients = db.get_all_patients()
+        for p in patients:
+            if p.email and p.email.lower() == req.email.lower() and p.password == req.password:
+                return {
+                    "success": True,
+                    "userId": p.id,
+                    "userName": f"{p.first_name} {p.last_name}",
+                    "role": "patient"
+                }
+        raise HTTPException(status_code=401, detail="Invalid patient email or password.")
+        
+    elif req.role == "doctor":
+        # Mock doctor login (in real app, verify against doctor DB)
+        doctors = db.get_doctors()
+        for d in doctors:
+            # allow dummy doc login: email doc-XX@example.com, password: doc
+            dummy_email = f"{d['id'].lower()}@example.com"
+            if req.email.lower() == dummy_email and req.password == "doc":
+                return {
+                    "success": True,
+                    "userId": d["id"],
+                    "userName": d["name"],
+                    "role": "doctor"
+                }
+        raise HTTPException(status_code=401, detail="Invalid doctor credentials. Try doc-01@example.com / doc")
+        
+    elif req.role == "admin":
+        if req.email.lower() == "admin@medfront.voice" and req.password == "admin":
+            return {
+                "success": True,
+                "userId": "ADMIN",
+                "userName": "System Administrator",
+                "role": "admin"
+            }
+        raise HTTPException(status_code=401, detail="Invalid admin credentials.")
+        
+    raise HTTPException(status_code=400, detail="Invalid role specified.")
 
 # =============================================================================
 # CLINIC METRICS & STATS
@@ -108,7 +161,7 @@ async def get_dashboard_stats() -> Dict[str, Any]:
             "azure_openai": "CONNECTED" if settings.is_azure_openai_configured else "OFFLINE",
             "rag_mode": settings.effective_rag_mode.upper(),
         },
-        "clinic_name": "AuraCare Health Clinic",
+        "clinic_name": "MedFront",
     }
 
 
@@ -207,9 +260,13 @@ async def register_new_patient(req: NewPatientRequest) -> Dict[str, Any]:
         date_of_birth=req.date_of_birth,
     )
     if existing:
+        # Update existing patient with new email and password (linking account)
+        existing.email = req.email or existing.email
+        existing.password = req.password or existing.password
+        db.update_patient_record(existing)
         return {
             "success": True,
-            "message": f"Patient already registered with permanent MRN: {existing.id}",
+            "message": f"Successfully linked to your existing MRN: {existing.id}. Profile updated.",
             "patient": existing.model_dump(),
             "is_new": False,
         }
@@ -228,6 +285,8 @@ async def register_new_patient(req: NewPatientRequest) -> Dict[str, Any]:
         insurance_provider=req.insurance_provider or "Self-Pay / Not Disclosed",
         insurance_policy_number=req.insurance_policy_number,
         emergency_contact=req.emergency_contact,
+        email=req.email or f"{req.first_name.lower()}.{req.last_name.lower()}@example.com",
+        password=req.password or req.first_name.lower(),
         active=True,
     )
     saved = db.register_patient(new_patient)

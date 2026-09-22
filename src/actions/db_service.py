@@ -18,6 +18,8 @@ from src.actions.models import (
     DoctorSchedule,
     PatientRecord,
     TimeSlot,
+    TestReport,
+    VisitSummary,
 )
 from src.core.config import settings
 
@@ -147,6 +149,11 @@ class DatabaseService(ABC):
         pass
 
     @abstractmethod
+    def update_patient_record(self, patient: PatientRecord) -> PatientRecord:
+        """Update an existing patient record."""
+        pass
+
+    @abstractmethod
     def get_all_appointments(self) -> List[Appointment]:
         """List all appointments (confirmed and cancelled) in the database."""
         pass
@@ -159,6 +166,16 @@ class DatabaseService(ABC):
     @abstractmethod
     def get_patient_clinical_notes(self, patient_id: str) -> List[ClinicalNote]:
         """Retrieve all longitudinal clinical notes for a patient."""
+        pass
+
+    @abstractmethod
+    def get_patient_test_reports(self, patient_id: str) -> List[TestReport]:
+        """Retrieve all test reports for a patient."""
+        pass
+
+    @abstractmethod
+    def get_patient_visit_summaries(self, patient_id: str) -> List[VisitSummary]:
+        """Retrieve all visit summaries for a patient."""
         pass
 
     @abstractmethod
@@ -199,8 +216,58 @@ class MockDatabaseService(DatabaseService):
         self._schedules: Dict[Tuple[str, str], DoctorSchedule] = {}  # (doctor_id, date) -> Schedule
         self._appointments: Dict[str, Appointment] = {}  # appointment_id -> Appointment
         self._clinical_notes: Dict[str, List[ClinicalNote]] = {}  # patient_id -> List[ClinicalNote]
+        self._test_reports: Dict[str, List[TestReport]] = {}
+        self._visit_summaries: Dict[str, List[VisitSummary]] = {}
         self._notifications: List[Dict[str, Any]] = []
-        self._seed_default_data()
+        if not self._load_from_disk():
+            self._seed_default_data()
+            self._save_to_disk()
+
+
+    def _save_to_disk(self):
+        import json
+        import os
+        os.makedirs("data", exist_ok=True)
+        try:
+            data = {
+                "patients": {k: v.model_dump() for k, v in self._patients.items()},
+                "doctors": self._doctors,
+                "schedules": {f"{k[0]}|{k[1]}": v.model_dump() for k, v in self._schedules.items()},
+                "appointments": {k: v.model_dump() for k, v in self._appointments.items()},
+                "clinical_notes": {k: [n.model_dump() for n in v] for k, v in self._clinical_notes.items()},
+                "test_reports": {k: [n.model_dump() for n in v] for k, v in self._test_reports.items()},
+                "visit_summaries": {k: [n.model_dump() for n in v] for k, v in self._visit_summaries.items()},
+                "notifications": self._notifications,
+            }
+            with open("data/mock_db.json", "w") as f:
+                json.dump(data, f, indent=2)
+        except Exception as e:
+            logger.error(f"Failed to save mock db to disk: {e}")
+
+    def _load_from_disk(self) -> bool:
+        import json
+        import os
+        from src.actions.models import PatientRecord, DoctorSchedule, Appointment, ClinicalNote, TestReport, VisitSummary
+        if not os.path.exists("data/mock_db.json"):
+            return False
+        try:
+            with open("data/mock_db.json", "r") as f:
+                data = json.load(f)
+            self._patients = {k: PatientRecord.model_validate(v) for k, v in data.get("patients", {}).items()}
+            self._doctors = data.get("doctors", [])
+            self._schedules = {}
+            for k, v in data.get("schedules", {}).items():
+                parts = k.split("|")
+                self._schedules[(parts[0], parts[1])] = DoctorSchedule.model_validate(v)
+            self._appointments = {k: Appointment.model_validate(v) for k, v in data.get("appointments", {}).items()}
+            self._clinical_notes = {k: [ClinicalNote.model_validate(n) for n in v] for k, v in data.get("clinical_notes", {}).items()}
+            self._test_reports = {k: [TestReport.model_validate(n) for n in v] for k, v in data.get("test_reports", {}).items()}
+            self._visit_summaries = {k: [VisitSummary.model_validate(n) for n in v] for k, v in data.get("visit_summaries", {}).items()}
+            self._notifications = data.get("notifications", [])
+            return True
+        except Exception as e:
+            logger.error(f"Failed to load mock db from disk: {e}")
+            return False
 
     def _seed_default_data(self):
         """Seed realistic healthcare fixture records."""
@@ -215,6 +282,8 @@ class MockDatabaseService(DatabaseService):
                 insurance_provider="Star Health Comprehensive",
                 insurance_policy_number="SH-889210",
                 emergency_contact="Neha Sharma (+91-98765-43211)",
+                email="aarav.sharma@example.com",
+                password="aarav",
             ),
             PatientRecord(
                 id="P-10024",
@@ -225,6 +294,8 @@ class MockDatabaseService(DatabaseService):
                 insurance_provider="HDFC ERGO Health",
                 insurance_policy_number="HE-443102",
                 emergency_contact="Amit Patel (+91-98123-45679)",
+                email="priya.patel@example.com",
+                password="priya",
             ),
             PatientRecord(
                 id="P-10025",
@@ -235,6 +306,8 @@ class MockDatabaseService(DatabaseService):
                 insurance_provider="Care Health Insurance",
                 insurance_policy_number="CH-992318",
                 emergency_contact="Pooja Malhotra (+91-99887-76656)",
+                email="vikram.malhotra@example.com",
+                password="vikram",
             ),
             PatientRecord(
                 id="P-10026",
@@ -245,6 +318,8 @@ class MockDatabaseService(DatabaseService):
                 insurance_provider="Niva Bupa Health",
                 insurance_policy_number="NB-332190",
                 emergency_contact="Rajesh Gupta (+91-98223-34456)",
+                email="sneha.gupta@example.com",
+                password="sneha",
             ),
             PatientRecord(
                 id="P-10027",
@@ -255,6 +330,8 @@ class MockDatabaseService(DatabaseService):
                 insurance_provider="ICICI Lombard",
                 insurance_policy_number="IL-551029",
                 emergency_contact="Sunita Verma (+91-97112-23345)",
+                email="rahul.verma@example.com",
+                password="rahul",
             ),
             PatientRecord(
                 id="P-10028",
@@ -265,6 +342,8 @@ class MockDatabaseService(DatabaseService):
                 insurance_provider="Star Health Comprehensive",
                 insurance_policy_number="SH-889211",
                 emergency_contact="Kavita Desai (+91-98334-45567)",
+                email="ananya.desai@example.com",
+                password="ananya",
             ),
         ]
         for p in patients_data:
@@ -554,6 +633,7 @@ class MockDatabaseService(DatabaseService):
         logger.info(
             f"Successfully booked appointment {appt_id} for patient {patient.id} with {target_schedule.doctor_name}"
         )
+        self._save_to_disk()
         return True, "Appointment booked successfully.", new_appointment
 
     def cancel_appointment(
@@ -586,6 +666,7 @@ class MockDatabaseService(DatabaseService):
                     s.appointment_id = None
                     break
 
+        self._save_to_disk()
         return True, f"Appointment '{appointment_id}' has been cancelled successfully."
 
     def get_patient_appointments(self, patient_id: str) -> List[Appointment]:
@@ -600,6 +681,12 @@ class MockDatabaseService(DatabaseService):
 
     def register_patient(self, patient: PatientRecord) -> PatientRecord:
         self._patients[patient.id] = patient
+        self._save_to_disk()
+        return patient
+
+    def update_patient_record(self, patient: PatientRecord) -> PatientRecord:
+        self._patients[patient.id] = patient
+        self._save_to_disk()
         return patient
 
     def get_all_appointments(self) -> List[Appointment]:
@@ -620,10 +707,17 @@ class MockDatabaseService(DatabaseService):
         if note.patient_id not in self._clinical_notes:
             self._clinical_notes[note.patient_id] = []
         self._clinical_notes[note.patient_id].insert(0, note)
+        self._save_to_disk()
         return note
 
     def get_patient_clinical_notes(self, patient_id: str) -> List[ClinicalNote]:
         return self._clinical_notes.get(patient_id, [])
+
+    def get_patient_test_reports(self, patient_id: str) -> List[TestReport]:
+        return self._test_reports.get(patient_id, [])
+
+    def get_patient_visit_summaries(self, patient_id: str) -> List[VisitSummary]:
+        return self._visit_summaries.get(patient_id, [])
 
     def get_doctors(self) -> List[Dict[str, Any]]:
         return self._doctors
@@ -656,6 +750,7 @@ class MockDatabaseService(DatabaseService):
                 slots=slots,
             )
             self._schedules[(doc_id, curr_date)] = sched
+        self._save_to_disk()
         return new_doc
 
     def send_appointment_notification(
@@ -670,7 +765,7 @@ class MockDatabaseService(DatabaseService):
 
         msg_body = (
             f"Dear {pat_name}, your appointment with {appt.doctor_name} is confirmed for "
-            f"{appt.appointment_date} at {appt.appointment_time} (Booking Ticket: {appt.id}) at MedFront Health Clinic. "
+            f"{appt.appointment_date} at {appt.appointment_time} (Booking Ticket: {appt.id}) at MedFront. "
             f"Please arrive 10 minutes prior."
         )
         logger.info(f"[{channel} NOTIFICATION SENT] To {pat_phone}: '{msg_body}'")
@@ -695,6 +790,7 @@ class MockDatabaseService(DatabaseService):
             "timestamp": datetime.now().isoformat(),
         }
         self._notifications.append(record)
+        self._save_to_disk()
         return record
 
     def get_recent_notifications(self, limit: int = 50) -> List[Dict[str, Any]]:
@@ -742,6 +838,14 @@ class CosmosDatabaseService(DatabaseService):
         )
         self.notes_container = self.database.create_container_if_not_exists(
             id="clinical_notes",
+            partition_key=PartitionKey(path="/patient_id"),
+        )
+        self.reports_container = self.database.create_container_if_not_exists(
+            id="test_reports",
+            partition_key=PartitionKey(path="/patient_id"),
+        )
+        self.summaries_container = self.database.create_container_if_not_exists(
+            id="visit_summaries",
             partition_key=PartitionKey(path="/patient_id"),
         )
         self._doctors = [dict(d) for d in DEFAULT_CLINIC_DOCTORS]
@@ -1004,13 +1108,24 @@ class CosmosDatabaseService(DatabaseService):
         appointment_time: str,
         reason_for_visit: str,
     ) -> Tuple[bool, str, Optional[Appointment]]:
-        # Check if slot is already booked (double-booking prevention)
+        # 1. Locate Clinician Schedule
+        schedules = self.get_doctor_schedules(doctor_name, appointment_date)
+        if not schedules:
+            return (
+                False,
+                f"No schedule found for '{doctor_name}' on date '{appointment_date}'.",
+                None,
+            )
+
+        target_schedule = schedules[0]
+
+        # 2. Check if slot is already booked (double-booking prevention)
         query = (
-            "SELECT * FROM c WHERE LOWER(c.doctor_name) = @doc "
+            "SELECT * FROM c WHERE c.doctor_id = @doc_id "
             "AND c.appointment_date = @date AND c.appointment_time = @time AND c.status = 'CONFIRMED'"
         )
         params = [
-            {"name": "@doc", "value": doctor_name.strip().lower()},
+            {"name": "@doc_id", "value": target_schedule.doctor_id},
             {"name": "@date", "value": appointment_date.strip()},
             {"name": "@time", "value": appointment_time.strip()},
         ]
@@ -1030,9 +1145,9 @@ class CosmosDatabaseService(DatabaseService):
         appt = Appointment(
             id=appt_id,
             patient_id=patient_id,
-            doctor_id="DOC-AZ",
-            doctor_name=doctor_name,
-            specialty="Consultation",
+            doctor_id=target_schedule.doctor_id,
+            doctor_name=target_schedule.doctor_name,
+            specialty=target_schedule.specialty,
             appointment_date=appointment_date,
             appointment_time=appointment_time,
             reason_for_visit=reason_for_visit,
@@ -1117,6 +1232,14 @@ class CosmosDatabaseService(DatabaseService):
             logger.warning(f"Error registering patient in Cosmos DB: {e}")
         return patient
 
+    def update_patient_record(self, patient: PatientRecord) -> PatientRecord:
+        try:
+            self.patients_container.upsert_item(body=patient.model_dump())
+            logger.info(f"Updated patient {patient.id} in Cosmos DB.")
+        except Exception as e:
+            logger.warning(f"Error updating patient in Cosmos DB: {e}")
+        return patient
+
     def create_clinical_note(self, note: ClinicalNote) -> ClinicalNote:
         try:
             self.notes_container.upsert_item(body=note.model_dump())
@@ -1170,6 +1293,38 @@ class CosmosDatabaseService(DatabaseService):
                     logger.debug(f"Fallback reading sample records skipped: {ex}")
 
         return sorted(notes, key=lambda n: n.created_at, reverse=True)
+
+    def get_patient_test_reports(self, patient_id: str) -> List[TestReport]:
+        reports = []
+        try:
+            query = "SELECT * FROM c WHERE c.patient_id = @pid"
+            params = [{"name": "@pid", "value": patient_id}]
+            items = list(
+                self.reports_container.query_items(
+                    query=query, parameters=params, partition_key=patient_id
+                )
+            )
+            for item in items:
+                reports.append(TestReport(**item))
+        except Exception as e:
+            logger.warning(f"Error reading test reports from Cosmos DB: {e}")
+        return sorted(reports, key=lambda n: n.created_at, reverse=True)
+
+    def get_patient_visit_summaries(self, patient_id: str) -> List[VisitSummary]:
+        summaries = []
+        try:
+            query = "SELECT * FROM c WHERE c.patient_id = @pid"
+            params = [{"name": "@pid", "value": patient_id}]
+            items = list(
+                self.summaries_container.query_items(
+                    query=query, parameters=params, partition_key=patient_id
+                )
+            )
+            for item in items:
+                summaries.append(VisitSummary(**item))
+        except Exception as e:
+            logger.warning(f"Error reading visit summaries from Cosmos DB: {e}")
+        return sorted(summaries, key=lambda n: n.created_at, reverse=True)
 
     def get_doctors(self) -> List[Dict[str, Any]]:
         return self._doctors
@@ -1231,7 +1386,7 @@ class CosmosDatabaseService(DatabaseService):
 
             msg_body = (
                 f"Dear {pat_name}, your appointment with {appt.get('doctor_name')} is confirmed for "
-                f"{appt.get('appointment_date')} at {appt.get('appointment_time')} (Booking Ticket: {appt.get('id')}) at MedFront Health Clinic. "
+                f"{appt.get('appointment_date')} at {appt.get('appointment_time')} (Booking Ticket: {appt.get('id')}) at MedFront. "
                 f"Please arrive 10 minutes prior."
             )
             logger.info(f"[{channel} NOTIFICATION SENT] To {pat_phone}: '{msg_body}'")

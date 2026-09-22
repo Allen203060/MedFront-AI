@@ -6,8 +6,7 @@ appointments, and action tool execution payloads.
 
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
-from pydantic import BaseModel, Field
-
+from pydantic import BaseModel, Field, computed_field
 
 class PatientRecord(BaseModel):
     """Structured patient demographic and profile record stored in Cosmos DB Layer A."""
@@ -19,8 +18,12 @@ class PatientRecord(BaseModel):
     insurance_provider: Optional[str] = Field(default="Self-Pay / Not Disclosed", description="Insurance carrier")
     insurance_policy_number: Optional[str] = Field(default=None, description="Policy/Member ID")
     emergency_contact: Optional[str] = Field(default=None, description="Emergency contact name & phone")
+    address: Optional[str] = Field(default=None, description="Patient physical address")
+    email: Optional[str] = Field(default=None, description="Patient email address for login")
+    password: Optional[str] = Field(default=None, description="Patient hashed or plain password")
     active: bool = Field(default=True, description="Account active status")
 
+    @computed_field
     @property
     def patient_id(self) -> str:
         return self.id
@@ -99,7 +102,43 @@ class NewPatientRequest(BaseModel):
     last_name: str
     date_of_birth: str
     phone_number: str
+    email: Optional[str] = None
+    password: Optional[str] = None
     insurance_provider: Optional[str] = "Self-Pay / Not Disclosed"
     insurance_policy_number: Optional[str] = None
     emergency_contact: Optional[str] = None
+    address: Optional[str] = None
+
+
+class TestReport(BaseModel):
+    """Structured lab result or diagnostic test report."""
+    id: str = Field(..., description="Unique Report ID (e.g., 'TR-5512')")
+    patient_id: str = Field(..., description="Patient ID / MRN (Partition Key)")
+    patient_name: str = Field(..., description="Full patient name")
+    test_name: str = Field(..., description="Name of the test (e.g., 'Complete Blood Count')")
+    test_date: str = Field(..., description="Date test was conducted in YYYY-MM-DD")
+    result_summary: str = Field(..., description="Summary of the findings")
+    doctor_id: str = Field(..., description="Ordering Clinician ID")
+    doctor_name: str = Field(..., description="Ordering Clinician Name")
+    status: str = Field(default="FINAL", description="Status: 'PENDING', 'PRELIMINARY', 'FINAL'")
+    created_at: str = Field(
+        default_factory=lambda: datetime.now(timezone.utc).isoformat(),
+        description="Timestamp report was logged"
+    )
+
+
+class VisitSummary(BaseModel):
+    """Summary of a past visit accessible to the patient."""
+    id: str = Field(..., description="Unique Visit ID")
+    patient_id: str = Field(..., description="Patient ID / MRN (Partition Key)")
+    doctor_name: str = Field(..., description="Clinician Name")
+    visit_date: str = Field(..., description="Date of visit in YYYY-MM-DD")
+    reason_for_visit: str = Field(..., description="Chief complaint or reason for the visit")
+    diagnosis: str = Field(..., description="Primary diagnosis or impression")
+    prescriptions: List[str] = Field(default_factory=list, description="Medications prescribed")
+    follow_up_instructions: str = Field(default="No specific follow-up required", description="Instructions for the patient")
+    created_at: str = Field(
+        default_factory=lambda: datetime.now(timezone.utc).isoformat(),
+        description="Timestamp visit summary was recorded"
+    )
 
