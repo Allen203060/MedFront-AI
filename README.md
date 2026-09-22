@@ -3,9 +3,9 @@
 [![Azure Native](https://img.shields.io/badge/Azure-Native_AI--102%2F103-0078D4?logo=microsoftazure)](https://azure.microsoft.com/)
 [![Python 3.10 | 3.11](https://img.shields.io/badge/Python-3.10%20%7C%203.11-3776AB?logo=python)](https://www.python.org/)
 [![FastAPI](https://img.shields.io/badge/FastAPI-0.115-009688?logo=fastapi)](https://fastapi.tiangolo.com/)
-[![HIPAA Compliant Architecture](https://img.shields.io/badge/Security-HIPAA_Aligned-critical)](#)
+[![Zero Trust Security](https://img.shields.io/badge/Security-Zero_Trust_Managed_Identity-blue)](#)
 
-**MedFront (AuraCare)** is an enterprise-grade, HIPAA-compliant clinical Voice AI receptionist and doctor assistant built natively on the Microsoft Azure ecosystem. Designed in alignment with **AI-102 / AI-103 enterprise architectures**, it replaces fragile multi-vendor API stacks with a unified, zero-trust Azure foundation for low-latency phone triage, deterministic patient verification, and automated clinical scheduling.
+**MedFront (AuraCare)** is an enterprise-grade clinical Voice AI receptionist and doctor assistant built natively on the Microsoft Azure ecosystem. Designed in alignment with **AI-102 / AI-103 enterprise architectures**, it replaces fragile multi-vendor API stacks with a unified, zero-trust Azure foundation for low-latency phone triage, deterministic patient verification, and automated clinical scheduling.
 
 ---
 
@@ -18,7 +18,7 @@
    - **Scoped Probabilistic Layer B (Azure AI Search):** Hybrid vector search over clinical narratives and clinic FAQs with mandatory OData partition filtering (`patient_id eq '{id}'`).
 4. **Dual-Persona RBAC:**
    - **Receptionist AI:** Phone-based voice agent restricted to administrative scope and mandatory caller verification.
-   - **Doctor AI:** Web/portal copilot with longitudinal clinical history access.
+   - **Doctor AI:** Web/portal copilot with longitudinal clinical history access and Ambient Scribe synthesis.
 5. **Zero-Trust Security:** Zero hardcoded API keys in production; leverages Azure Managed Identities (`DefaultAzureCredential`).
 
 ---
@@ -53,15 +53,13 @@
 
 ## Repository Structure
 
-The codebase is partitioned into **5 isolated modules** so team members can build and test each subsystem independently:
+The codebase is partitioned into isolated modules so team members can build and test each subsystem independently:
 
 ```
 MedFront-AI/
 ├── .env.example             # Sanitized environment variable template
 ├── pyproject.toml           # Enterprise package configuration
-├── requirements.txt         # Pinned Azure enterprise dependencies
-├── SOUL.md                  # Project blueprint & active progress tracker
-├── CHALLENGES.md            # Technical challenge & interview defense journal
+├── requirements.txt         # Pinned Azure dependencies
 ├── docs/                    # Architecture & system design documentation
 ├── data/                    # Clinical knowledge store & vector cache
 │   ├── knowledge/           # Source clinic policies (.md) and patient records (.json)
@@ -73,8 +71,12 @@ MedFront-AI/
 │   ├── brain/               # Module 3: Azure OpenAI (GPT-4o) conversation & personas
 │   ├── rag/                 # Module 4: Azure AI Search scoped hybrid retrieval
 │   ├── actions/             # Module 5: Cosmos DB patient lookup & tool mutations
+│   ├── dashboard/           # Doctor copilot dashboard & Ambient Scribe UI
 │   └── merger/              # Final Integration: Low-latency full-duplex WebSocket loop
-└── tests/                   # Independent unit and integration tests
+├── scripts/                 # Administrative & database utility tools
+│   ├── database/            # Database patch, backfill & migration scripts
+│   └── queries/             # Data lookup & inspection scripts
+└── tests/                   # Independent unit, integration, and sandbox tests
 ```
 
 ---
@@ -82,7 +84,7 @@ MedFront-AI/
 ## Prerequisites
 
 - **Python:** Version **3.10** or **3.11** (recommended for pre-compiled `azure-cognitiveservices-speech` C++ wheels).
-- **Node.js:** Version **v18+** or **v20+** (required for Graft context engine).
+- **Node.js:** Version **v18+** or **v20+**.
 - **Git:** Version **2.30+**.
 - **Azure Subscription:** With access to provision:
   - Azure Communication Services (with a purchased PSTN phone number).
@@ -103,8 +105,8 @@ sudo apt-get update && sudo apt-get install -y libasound2 libasound2-dev
 
 ### 2. Clone Repository & Create Virtual Environment
 ```bash
-git clone <repository-url>
-cd Azure_VoiceAI
+git clone https://github.com/Allen203060/MedFront-AI.git
+cd MedFront-AI
 
 # Create virtual environment with Python 3.10 or 3.11
 python3 -m venv .venv
@@ -123,13 +125,6 @@ cp .env.example .env
 ```
 Open `.env` in your editor and fill in your Azure service keys and endpoints.
 
-### 5. Initialize the Graft Context Layer
-```bash
-# Initialize and build the Tree-sitter AST knowledge graph
-npx -y @nanonets/graft init
-npx @nanonets/graft build
-```
-
 ---
 
 ## Setup Guide (Windows)
@@ -142,8 +137,8 @@ Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope CurrentUser
 
 ### 2. Clone Repository & Create Virtual Environment
 ```powershell
-git clone <repository-url>
-cd Azure_VoiceAI
+git clone https://github.com/Allen203060/MedFront-AI.git
+cd MedFront-AI
 
 # Create virtual environment using Python 3.10 or 3.11
 python -m venv .venv
@@ -152,7 +147,7 @@ python -m venv .venv
 # In PowerShell:
 .\.venv\Scripts\Activate.ps1
 # Or in Command Prompt (CMD):
-.\.venv\Scripts\activate.bat
+copy .env.example .env
 ```
 
 ### 3. Install Python Dependencies
@@ -170,12 +165,6 @@ copy .env.example .env
 ```
 Open `.env` in Notepad or VS Code and enter your Azure service credentials.
 
-### 5. Initialize the Graft Context Layer
-```powershell
-npx -y @nanonets/graft init
-npx @nanonets/graft build
-```
-
 ---
 
 ## Verification & Sanity Check
@@ -186,8 +175,8 @@ Verify that your environment and configuration are correctly wired:
 # Validate settings loading (Linux & Windows)
 python -c "from src.core.config import settings; print(f'Config OK! Environment: {settings.environment}, Model: {settings.azure_openai_deployment_name}')"
 
-# Run tests
-pytest
+# Verify Orchestrator brain import
+python -c "from src.brain.orchestrator import AgenticBrainOrchestrator; print('Orchestrator ready!')"
 ```
 
 ---
@@ -205,7 +194,7 @@ To avoid tangled dependencies, follow the isolated module path:
 
 ---
 
-## Compliance & Security Directives
+## Security & Data Directives
 
-- **HIPAA Guardrail:** Never query patient health records without an exact `patient_id` OData partition filter.
+- **Data Privacy Guardrail:** Never query patient records without an exact `patient_id` OData partition filter.
 - **Credential Hygiene:** Never commit `.env` or secrets to git. In cloud deployments, enable `USE_MANAGED_IDENTITY=true` to use Azure Entra ID / Managed Identities.
