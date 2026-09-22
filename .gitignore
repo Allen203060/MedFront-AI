@@ -6,8 +6,10 @@ __pycache__/
 env/
 venv/
 ENV/
+*.egg-info/
+medfront_ai.egg-info/
 
-# Secrets & Environment Configurations (HIPAA PHI Protection)
+# Secrets & Environment Configurations
 .env
 .env.local
 .env.*.local
@@ -25,23 +27,24 @@ temp_audio/
 .coverage
 htmlcov/
 
-# IDE / Editor Files
+# IDE, Agent & Tool Configurations
 .vscode/
 .idea/
 *.swp
-
+.agents/
+.claude/
+.mcp.json
+.ignore
 
 # Graft Code Context Layer Cache
 graft/
-node_modules/
 
 # Node & Build Artifacts
 node_modules/
-*.egg-info/
 dist/
 build/
 
-# Internal Project Notes & Documentation
+# Internal Project Notes & Extra Documentation
 CHALLENGES.md
 SOUL.md
-
+theory_concepts/
